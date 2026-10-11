@@ -32,7 +32,7 @@ jobs:
           GOOS=windows go vet ./...
 
       - name: Test
-        run: go test ./...
+        run: go test -timeout 2m ./...  # a stuck test fails quickly instead of after 10 minutes
 
       - name: Build
         run: |

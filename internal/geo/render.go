@@ -182,11 +182,12 @@ func line(x0, y0, x1, y1 int, set func(x, y int)) {
 		if x0 == x1 && y0 == y1 {
 			return
 		}
-		if 2*e >= dy {
+		e2 := 2 * e
+		if e2 >= dy {
 			e += dy
 			x0 += sx
 		}
-		if 2*e <= dx {
+		if e2 <= dx {
 			e += dx
 			y0 += sy
 		}
