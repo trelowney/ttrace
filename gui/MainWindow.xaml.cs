@@ -110,8 +110,8 @@ public sealed partial class MainWindow : Window
         if (!System.IO.File.Exists(exe))
         {
             Fail("ttrace.exe is missing",
-                $"The file ttrace.exe must be in the same folder as this program ({AppContext.BaseDirectory}). " +
-                "Unpack the whole downloaded zip file again into one folder and start ttrace-gui.exe from there.");
+                $"This program carries ttrace.exe inside and unpacks it into {AppContext.BaseDirectory}, but it is not there " +
+                "(antivirus software may have removed it). Allow ttrace there, or download this program again, and try again.");
             return;
         }
 
@@ -376,7 +376,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            landError = "The world outline could not be loaded, so only the route is drawn. Unpacking the zip file again may help.";
+            landError = "The world outline could not be loaded, so only the route is drawn. Downloading this program again may help.";
             Crash.Write(ex);
             return;
         }

@@ -60,8 +60,8 @@ jobs:
           case "$GITHUB_REF_NAME" in v0.*) pre="--prerelease" ;; esac  # 0.x = in development
           gh release create "$GITHUB_REF_NAME" dist/* --title "ttrace $GITHUB_REF_NAME" --generate-notes $pre
 
-  # Windows window (WinUI 3). One zip per CPU type with ttrace-gui.exe,
-  # everything it needs and ttrace.exe itself: unpack and run, no installing.
+  # Windows window (WinUI 3): one ttrace-gui-windows-<cpu>.exe with
+  # everything inside, ttrace.exe too. Nothing to unpack or install.
   gui:
     needs: build
     runs-on: windows-latest
@@ -91,19 +91,20 @@ jobs:
           esac
           go mod tidy
           CGO_ENABLED=0 GOOS=windows GOARCH=${{ matrix.goarch }} go build -trimpath \
-            -ldflags "-s -w -X main.version=$V" -o ttrace.exe ./cmd/ttrace
+            -ldflags "-s -w -X main.version=$V" -o gui/ttrace.exe ./cmd/ttrace
           dotnet publish gui/TtraceGui.csproj -c Release -r win-${{ matrix.arch }} \
             -p:Platform=${{ matrix.platform }} $NV -o out
-          cp ttrace.exe out/
-          du -sh out
+          ls -la out
+          cp out/ttrace-gui.exe ttrace-gui-windows-${{ matrix.arch }}.exe
 
-      # Starts the window, traces a host and checks that results arrived.
+      # Starts the published file exactly as people download it, traces a
+      # host and checks that results arrived.
       - name: Self-test
         if: matrix.arch == 'x64'
         shell: pwsh
         run: |
           $res = Join-Path $env:RUNNER_TEMP 'selftest.txt'
-          $p = Start-Process -FilePath out\ttrace-gui.exe -ArgumentList '--selftest', $res, '1.1.1.1' -PassThru
+          $p = Start-Process -FilePath .\ttrace-gui-windows-x64.exe -ArgumentList '--selftest', $res, '1.1.1.1' -PassThru
           if (-not $p.WaitForExit(150000)) { $p.Kill(); Write-Error 'the window did not finish in time' }
           $crash = Join-Path $env:LOCALAPPDATA 'ttrace\gui-crash.txt'
           if (Test-Path $crash) { Get-Content $crash }
@@ -112,13 +113,9 @@ jobs:
           Write-Output $line
           if (-not $line.StartsWith('ok ')) { exit 1 }
 
-      - name: Zip
-        shell: pwsh
-        run: Compress-Archive -Path out\* -DestinationPath ttrace-gui-windows-${{ matrix.arch }}.zip
-
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" ttrace-gui-windows-${{ matrix.arch }}.zip --clobber
+        run: gh release upload "$GITHUB_REF_NAME" ttrace-gui-windows-${{ matrix.arch }}.exe --clobber

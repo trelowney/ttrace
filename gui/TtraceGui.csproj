@@ -19,6 +19,12 @@
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <SelfContained>true</SelfContained>
     <Version>0.0.0</Version>
+    <!-- everything in one ttrace-gui.exe; on the first start it unpacks
+         itself into a temporary folder and runs from there -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>embedded</DebugType>
   </PropertyGroup>
 
   <ItemGroup>
@@ -32,5 +38,7 @@
 
   <ItemGroup>
     <Content Include="Assets\land.bin" CopyToOutputDirectory="PreserveNewest" />
+    <!-- CI builds ttrace.exe into this folder before publishing -->
+    <Content Include="ttrace.exe" Condition="Exists('ttrace.exe')" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

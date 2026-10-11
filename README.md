@@ -64,10 +64,11 @@ the network owner, not where the router really stands.
 ### Windows window
 
 For Windows there is also a window version: download
-`ttrace-gui-windows-x64.zip` (or `-arm64.zip`) from the releases, unpack the
-whole zip into one folder and start `ttrace-gui.exe`. Nothing has to be
-installed; ttrace.exe and everything else it needs are inside. Type the host,
-press Start, and you get the same table plus the route on a world map.
+`ttrace-gui-windows-x64.exe` (or `-arm64.exe`) from the releases and start it.
+It is one file with everything inside, ttrace.exe too; nothing has to be
+installed. On the first start it unpacks itself into a temporary folder, so
+that start takes a few seconds longer. Type the host, press Start, and you get
+the same table plus the route on a world map.
 
 So far the window has only been checked by an automatic test on a build
 machine, not by a person.
