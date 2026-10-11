@@ -18,24 +18,32 @@ import (
 // prober for it. nil when the target was given as an IP address.
 type Switcher func(v6 bool) (net.IP, probe.Prober, error)
 
+// Tab is one traced target.
+type Tab struct {
+	Eng    *trace.Engine
+	Switch Switcher
+}
+
 type Options struct {
 	Version string
 	Names   report.NameMode
 	ShowAS  bool
-	Switch  Switcher
 }
 
 type view struct {
 	scr    tcell.Screen
-	eng    *trace.Engine
+	tabs   []Tab
+	cur    int
+	eng    *trace.Engine // engine of the current tab
 	opt    Options
 	pulse  bool // show recent latency bars instead of statistics
 	msg    string
 	msgEnd time.Time
 }
 
-// Run shows the live table until the user quits.
-func Run(ctx context.Context, eng *trace.Engine, opt Options) error {
+// Run shows the live table until the user quits. With several targets each
+// gets a tab; Tab / arrow keys switch between them.
+func Run(ctx context.Context, tabs []Tab, opt Options) error {
 	scr, err := tcell.NewScreen()
 	if err != nil {
 		return err
@@ -47,7 +55,9 @@ func Run(ctx context.Context, eng *trace.Engine, opt Options) error {
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go eng.Run(ctx, func(trace.Snapshot) { scr.PostEvent(tcell.NewEventInterrupt(nil)) })
+	for _, t := range tabs {
+		go t.Eng.Run(ctx, func(trace.Snapshot) { scr.PostEvent(tcell.NewEventInterrupt(nil)) })
+	}
 	go func() { // names and AS data arrive between rounds
 		t := time.NewTicker(500 * time.Millisecond)
 		defer t.Stop()
@@ -61,7 +71,7 @@ func Run(ctx context.Context, eng *trace.Engine, opt Options) error {
 		}
 	}()
 
-	v := &view{scr: scr, eng: eng, opt: opt}
+	v := &view{scr: scr, tabs: tabs, eng: tabs[0].Eng, opt: opt}
 	v.draw()
 	for {
 		switch ev := scr.PollEvent().(type) {
@@ -73,10 +83,14 @@ func Run(ctx context.Context, eng *trace.Engine, opt Options) error {
 			switch {
 			case ev.Key() == tcell.KeyCtrlC, ev.Key() == tcell.KeyEscape, ev.Rune() == 'q':
 				return nil
+			case ev.Key() == tcell.KeyTab, ev.Key() == tcell.KeyRight:
+				v.show(v.cur + 1)
+			case ev.Key() == tcell.KeyBacktab, ev.Key() == tcell.KeyLeft:
+				v.show(v.cur - 1)
 			case ev.Rune() == 'p':
-				eng.SetPaused(!eng.Paused())
+				v.eng.SetPaused(!v.eng.Paused())
 			case ev.Rune() == 'r':
-				eng.Reset()
+				v.eng.Reset()
 				v.say("statistics cleared")
 			case ev.Rune() == 'n':
 				v.opt.Names = (v.opt.Names + 1) % 3
@@ -95,6 +109,12 @@ func Run(ctx context.Context, eng *trace.Engine, opt Options) error {
 	}
 }
 
+func (v *view) show(i int) {
+	n := len(v.tabs)
+	v.cur = (i%n + n) % n
+	v.eng = v.tabs[v.cur].Eng
+}
+
 func (v *view) say(m string) {
 	v.msg, v.msgEnd = m, time.Now().Add(4*time.Second)
 }
@@ -109,11 +129,12 @@ func (v *view) switchFamily(v6 bool) {
 		v.say("already using " + want)
 		return
 	}
-	if v.opt.Switch == nil {
+	sw := v.tabs[v.cur].Switch
+	if sw == nil {
 		v.say("the target is an IP address, so it cannot switch to " + want + " — start ttrace with a host name")
 		return
 	}
-	ip, p, err := v.opt.Switch(v6)
+	ip, p, err := sw(v6)
 	if err != nil {
 		v.say(err.Error())
 		return
@@ -168,7 +189,21 @@ func (v *view) draw() {
 	if v.msg != "" && time.Now().Before(v.msgEnd) {
 		v.put(0, 1, v.msg, stMsg)
 	} else {
-		v.put(0, 1, fmt.Sprintf("keys: q quit  p pause  r reset  n names (%s)  a AS  d pulse  4/6 IPv4/IPv6", v.opt.Names), stDim)
+		keys := fmt.Sprintf("keys: q quit  p pause  r reset  n names (%s)  a AS  d pulse  4/6 IPv4/IPv6", v.opt.Names)
+		if len(v.tabs) > 1 {
+			keys += "  Tab next target"
+		}
+		v.put(0, 1, keys, stDim)
+	}
+	if len(v.tabs) > 1 { // tab bar
+		x := 0
+		for i, t := range v.tabs {
+			st := stDim
+			if i == v.cur {
+				st = stHead
+			}
+			x = v.put(x, 2, fmt.Sprintf(" %d %s ", i+1, t.Eng.Snapshot().Target), st) + 1
+		}
 	}
 
 	// columns: "#" 4, host flexible, AS block, stats (or pulse)

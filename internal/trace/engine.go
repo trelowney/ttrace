@@ -6,6 +6,7 @@ import (
 	"context"
 	"math"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -77,6 +78,19 @@ type Snapshot struct {
 	Round   int    `json:"round"`
 	Reached bool   `json:"reached"`
 	Hops    []Hop  `json:"hops"`
+	Links   []Link `json:"links,omitempty"`
+}
+
+// Link says that within one round the router From answered at hop FromTTL
+// and To answered at the next answering hop ToTTL (hops in between were
+// silent). From is empty for the first answering hop (the link starts at
+// this computer). Used for drawing the route as a graph.
+type Link struct {
+	From    string `json:"from"`
+	To      string `json:"to"`
+	FromTTL int    `json:"from_ttl"`
+	ToTTL   int    `json:"to_ttl"`
+	Seen    int    `json:"seen"`
 }
 
 // RecentLen is how many past results per hop are kept for the pulse view.
@@ -101,6 +115,7 @@ type Engine struct {
 	hops    []hopStats
 	destTTL int
 	round   int
+	links   map[[2]string]*Link
 
 	as      *asinfo.Resolver
 	names   map[string]string
@@ -132,6 +147,7 @@ func (e *Engine) reset() {
 	e.hops = make([]hopStats, e.cfg.MaxTTL)
 	e.destTTL = 0
 	e.round = 0
+	e.links = map[[2]string]*Link{}
 }
 
 // Reset clears statistics (name and AS caches are kept).
@@ -301,7 +317,32 @@ func (e *Engine) record(results []probe.Result, gen int) bool {
 			e.destTTL = r.TTL
 		}
 	}
+	e.recordLinks(results)
 	return e.cfg.Count > 0 && e.round >= e.cfg.Count
+}
+
+// recordLinks remembers which answering routers followed each other in one round.
+func (e *Engine) recordLinks(results []probe.Result) {
+	sorted := append([]probe.Result(nil), results...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].TTL < sorted[j].TTL })
+	prev, prevTTL := "", 0
+	for _, r := range sorted {
+		if r.Addr == nil || (e.destTTL > 0 && r.TTL > e.destTTL) {
+			continue
+		}
+		addr := r.Addr.String()
+		if addr == prev {
+			continue
+		}
+		k := [2]string{prev, addr}
+		l := e.links[k]
+		if l == nil {
+			l = &Link{From: prev, To: addr, FromTTL: prevTTL, ToTTL: r.TTL}
+			e.links[k] = l
+		}
+		l.Seen++
+		prev, prevTTL = addr, r.TTL
+	}
 }
 
 func (h *hopStats) push(v float64) {
@@ -404,6 +445,27 @@ func (e *Engine) Snapshot() Snapshot {
 		}
 		s.Hops = append(s.Hops, row)
 	}
+	hide := func(addr string, ttl int) string {
+		if ttl >= 1 && ttl <= e.cfg.Hide {
+			return "(hidden)"
+		}
+		return addr
+	}
+	for _, l := range e.links {
+		c := *l
+		c.From, c.To = hide(c.From, c.FromTTL), hide(c.To, c.ToTTL)
+		s.Links = append(s.Links, c)
+	}
+	sort.Slice(s.Links, func(i, j int) bool {
+		a, b := s.Links[i], s.Links[j]
+		if a.ToTTL != b.ToTTL {
+			return a.ToTTL < b.ToTTL
+		}
+		if a.From != b.From {
+			return a.From < b.From
+		}
+		return a.To < b.To
+	})
 	return s
 }
 

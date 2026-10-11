@@ -128,3 +128,14 @@ func countOf(h Hop, e *Engine) int {
 	defer e.mu.Unlock()
 	return e.hops[h.TTL-1].seen[h.Addr]
 }
+
+func TestLinks(t *testing.T) {
+	dst := net.ParseIP("192.0.2.10")
+	e := New(Config{Target: "x", IP: dst, MaxTTL: 30, Hide: 1, Interval: time.Millisecond, Timeout: time.Second, Count: 2}, fakeProber{dst})
+	e.Run(context.Background(), nil)
+	l := e.Snapshot().Links
+	// you -> hop 1 (hidden) -> (hop 2 silent) -> target at hop 3
+	if len(l) != 2 || l[0].From != "" || l[0].To != "(hidden)" || l[1].From != "(hidden)" || l[1].To != "192.0.2.10" || l[1].FromTTL != 1 || l[1].ToTTL != 3 || l[1].Seen != 2 {
+		t.Fatalf("links: %+v", l)
+	}
+}

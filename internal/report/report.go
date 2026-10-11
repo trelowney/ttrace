@@ -172,24 +172,26 @@ func ms(v float64, recv int) string {
 	return strconv.FormatFloat(v, 'f', 2, 64)
 }
 
-// CSV writes one line per hop with a header line.
-func CSV(w io.Writer, s trace.Snapshot) error {
+// CSV writes one line per hop (of all targets) with a header line.
+func CSV(w io.Writer, snaps []trace.Snapshot) error {
 	c := csv.NewWriter(w)
 	c.Write([]string{"target", "ip", "ttl", "host", "addr", "asn", "as_name", "country", "prefix", "registry",
 		"loss_pct", "sent", "recv", "last_ms", "avg_ms", "best_ms", "worst_ms", "stdev_ms", "mpls", "other_addrs"})
-	for _, h := range s.Hops {
-		host := h.Host
-		if h.Hidden {
-			host = "(hidden)"
+	for _, s := range snaps {
+		for _, h := range s.Hops {
+			host := h.Host
+			if h.Hidden {
+				host = "(hidden)"
+			}
+			var others []string
+			for _, o := range h.Others {
+				others = append(others, o.Addr)
+			}
+			c.Write([]string{s.Target, s.IP, strconv.Itoa(h.TTL), host, h.Addr, ASN(h), h.ASName, h.Country, h.Prefix, h.Registry,
+				strconv.FormatFloat(h.Loss, 'f', 1, 64), strconv.Itoa(h.Sent), strconv.Itoa(h.Recv),
+				ms(h.Last, h.Recv), ms(h.Avg, h.Recv), ms(h.Best, h.Recv), ms(h.Worst, h.Recv), ms(h.StDev, h.Recv),
+				strings.TrimPrefix(MPLS(h.MPLS), "MPLS "), strings.Join(others, " ")})
 		}
-		var others []string
-		for _, o := range h.Others {
-			others = append(others, o.Addr)
-		}
-		c.Write([]string{s.Target, s.IP, strconv.Itoa(h.TTL), host, h.Addr, ASN(h), h.ASName, h.Country, h.Prefix, h.Registry,
-			strconv.FormatFloat(h.Loss, 'f', 1, 64), strconv.Itoa(h.Sent), strconv.Itoa(h.Recv),
-			ms(h.Last, h.Recv), ms(h.Avg, h.Recv), ms(h.Best, h.Recv), ms(h.Worst, h.Recv), ms(h.StDev, h.Recv),
-			strings.TrimPrefix(MPLS(h.MPLS), "MPLS "), strings.Join(others, " ")})
 	}
 	c.Flush()
 	return c.Error()
@@ -234,4 +236,11 @@ func JSON(w io.Writer, s trace.Snapshot, indent bool) error {
 		enc.SetIndent("", "  ")
 	}
 	return enc.Encode(s)
+}
+
+// JSONList writes several snapshots as one indented JSON array.
+func JSONList(w io.Writer, snaps []trace.Snapshot) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(snaps)
 }

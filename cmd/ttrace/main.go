@@ -15,7 +15,11 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
+	"sync"
 	"time"
+
+	"github.com/trelowney/ttrace/internal/config"
 
 	"github.com/trelowney/ttrace/internal/probe"
 	"github.com/trelowney/ttrace/internal/report"
@@ -28,7 +32,7 @@ var version = "dev"
 const usage = `ttrace %s — trace the route to a host, with AS number, AS name and country for every hop
 
 Usage:
-  ttrace [options] <host or IP>
+  ttrace [options] <host or IP> [more hosts…]
 
 Examples:
   ttrace example.com                      live view (q quit, d pulse, 4/6 switch IPv4/IPv6)
@@ -38,46 +42,112 @@ Examples:
   ttrace --hide 2 example.com             hide your own first 2 hops (for screenshots)
   ttrace -P tcp -p 443 example.com        probe with TCP to port 443, gets through most firewalls
   ttrace -P udp example.com               probe with UDP; also shows parallel paths (ECMP)
+  ttrace example.com example.net          two targets at once, Tab switches between them
+  ttrace -r --format dot example.com > route.dot && dot -Tsvg route.dot -o route.svg
+                                          draw the route as a picture with Graphviz
+
+Settings file: options can also be written into %s,
+one per line with the same names as below, e.g. "interval = 2s" or "no-as".
+Options given on the command line win.
 
 Options:
 `
 
 func main() {
-	var (
-		count      = flag.Int("c", 0, "number of rounds (default: endless in live view, 10 with -r/-j)")
-		reportMode = flag.Bool("r", false, "report mode: run -c rounds, print the result and exit")
-		format     = flag.String("format", "text", "report format: text, json, csv or markdown")
-		jsonMode   = flag.Bool("j", false, "short for -r --format json")
-		wide       = flag.Bool("wide", false, "do not shorten long host and AS names in text reports")
-		jsonStream = flag.Bool("json-stream", false, "print one JSON line after every round (for scripts and the GUI)")
-		interval   = flag.Duration("i", time.Second, "time between rounds")
-		timeout    = flag.Duration("w", 2*time.Second, "how long to wait for an answer")
-		firstTTL   = flag.Int("f", 1, "first hop to probe (skip the hops before it)")
-		maxTTL     = flag.Int("m", 30, "maximum number of hops")
-		giveUp     = flag.Int("give-up", 0, "stop probing past this many silent hops in a row after the last answer (0 = never)")
-		hide       = flag.Int("hide", 0, "hide address, name and AS of the first N hops, e.g. your home network")
-		probeType  = flag.String("P", "icmp", "probe type: icmp, udp or tcp (udp and tcp: Linux and macOS only)")
-		port       = flag.Int("p", 0, "destination port for -P udp (default 33434) and -P tcp (default 80)")
-		size       = flag.Int("s", 64, "packet size in bytes, including IP and ICMP/UDP headers (not used with -P tcp)")
-		tos        = flag.Int("tos", 0, "TOS / traffic class byte, e.g. 184 for DSCP EF")
-		source     = flag.String("a", "", "send from this local IP address")
-		only4      = flag.Bool("4", false, "use IPv4 only")
-		only6      = flag.Bool("6", false, "use IPv6 only")
-		noDNS      = flag.Bool("n", false, "do not look up host names, show IP addresses (key n in the live view switches name / IP / both)")
-		noAS       = flag.Bool("no-as", false, "do not look up AS number, AS name and country")
-		showVer    = flag.Bool("v", false, "print version and exit")
-	)
+	defaultConfig := config.DefaultPath()
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), usage, version)
+		fmt.Fprintf(flag.CommandLine.Output(), usage, version, defaultConfig)
 		flag.PrintDefaults()
 	}
+	flag.String("config", defaultConfig, "settings file to read")
+	opts := defineFlags()
+	loadConfig(defaultConfig)
 	flag.Parse()
+	run(opts)
+}
+
+// loadConfig applies the settings file before the command line is parsed,
+// so that command line options override it.
+func loadConfig(def string) {
+	path, must := def, false
+	args := os.Args[1:]
+	for i, a := range args {
+		if a == "--" {
+			break
+		}
+		name, val, hasVal := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		if !strings.HasPrefix(a, "-") || name != "config" {
+			continue
+		}
+		if !hasVal && i+1 < len(args) {
+			val = args[i+1]
+		}
+		path, must = val, true
+	}
+	if path == "" {
+		return
+	}
+	settings, err := config.Load(path, must)
+	if err != nil {
+		fail("cannot read the settings file: " + err.Error())
+	}
+	for _, st := range settings {
+		f := flag.Lookup(st.Name)
+		if f == nil || st.Name == "config" {
+			fail(fmt.Sprintf("%s line %d: unknown option %q — see ttrace -h for the names", path, st.Line, st.Name))
+		}
+		if err := f.Value.Set(st.Value); err != nil {
+			fail(fmt.Sprintf("%s line %d: bad value for %s: %v", path, st.Line, st.Name, err))
+		}
+	}
+}
+
+type options struct {
+	count, firstTTL, maxTTL, giveUp, hide, size, tos, port *int
+	reportMode, jsonMode, wide, jsonStream, only4, only6   *bool
+	noDNS, noAS, showVer                                   *bool
+	format, source, probeType                              *string
+	interval, timeout                                      *time.Duration
+}
+
+func defineFlags() options {
+	return options{
+		count:      flag.Int("c", 0, "number of rounds (default: endless in live view, 10 with -r/-j)"),
+		reportMode: flag.Bool("r", false, "report mode: run -c rounds, print the result and exit"),
+		format:     flag.String("format", "text", "report format: text, json, csv, markdown or dot (Graphviz)"),
+		jsonMode:   flag.Bool("j", false, "short for -r --format json"),
+		wide:       flag.Bool("wide", false, "do not shorten long host and AS names in text reports"),
+		jsonStream: flag.Bool("json-stream", false, "print one JSON line after every round (for scripts and the GUI)"),
+		interval:   flag.Duration("i", time.Second, "time between rounds"),
+		timeout:    flag.Duration("w", 2*time.Second, "how long to wait for an answer"),
+		firstTTL:   flag.Int("f", 1, "first hop to probe (skip the hops before it)"),
+		maxTTL:     flag.Int("m", 30, "maximum number of hops"),
+		giveUp:     flag.Int("give-up", 0, "stop probing past this many silent hops in a row after the last answer (0 = never)"),
+		hide:       flag.Int("hide", 0, "hide address, name and AS of the first N hops, e.g. your home network"),
+		probeType:  flag.String("P", "icmp", "probe type: icmp, udp or tcp (udp and tcp: Linux and macOS only)"),
+		port:       flag.Int("p", 0, "destination port for -P udp (default 33434) and -P tcp (default 80)"),
+		size:       flag.Int("s", 64, "packet size in bytes, including IP and ICMP/UDP headers (not used with -P tcp)"),
+		tos:        flag.Int("tos", 0, "TOS / traffic class byte, e.g. 184 for DSCP EF"),
+		source:     flag.String("a", "", "send from this local IP address"),
+		only4:      flag.Bool("4", false, "use IPv4 only"),
+		only6:      flag.Bool("6", false, "use IPv6 only"),
+		noDNS:      flag.Bool("n", false, "do not look up host names, show IP addresses (key n in the live view switches name / IP / both)"),
+		noAS:       flag.Bool("no-as", false, "do not look up AS number, AS name and country"),
+		showVer:    flag.Bool("v", false, "print version and exit"),
+	}
+}
+
+func run(o options) {
+	count, reportMode, format, jsonMode, wide, jsonStream := o.count, o.reportMode, o.format, o.jsonMode, o.wide, o.jsonStream
+	interval, timeout, firstTTL, maxTTL, giveUp, hide := o.interval, o.timeout, o.firstTTL, o.maxTTL, o.giveUp, o.hide
+	probeType, port, size, tos, source := o.probeType, o.port, o.size, o.tos, o.source
+	only4, only6, noDNS, noAS, showVer := o.only4, o.only6, o.noDNS, o.noAS, o.showVer
 
 	if *showVer {
 		fmt.Println("ttrace", version)
 		return
 	}
-	if flag.NArg() != 1 {
+	if flag.NArg() < 1 {
 		flag.Usage()
 		os.Exit(2)
 	}
@@ -107,10 +177,13 @@ func main() {
 	if *jsonMode {
 		*reportMode, *format = true, "json"
 	}
+	if *format != "text" && !*jsonStream {
+		*reportMode = true // other formats only make sense as a report
+	}
 	switch *format {
-	case "text", "json", "csv", "markdown", "md":
+	case "text", "json", "csv", "markdown", "md", "dot":
 	default:
-		fail("--format must be text, json, csv or markdown")
+		fail("--format must be text, json, csv, markdown or dot")
 	}
 	popts := probe.Options{Size: *size, TOS: *tos, Proto: *probeType, Port: *port}
 	probeDesc := "ICMP"
@@ -135,63 +208,43 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	target := flag.Arg(0)
-	ip, err := resolve(ctx, target, *only4, *only6)
-	if err != nil {
-		fail(err.Error())
-	}
-
-	p, err := probe.New(ip, popts)
-	if err != nil {
-		fail(err.Error())
-	}
-
 	batch := *reportMode
 	if batch && *count == 0 {
 		*count = 10
 	}
-	eng := trace.New(trace.Config{
-		Target:   target,
-		Probe:    probeDesc,
-		IP:       ip,
-		FirstTTL: *firstTTL,
-		MaxTTL:   *maxTTL,
-		GiveUp:   *giveUp,
-		Hide:     *hide,
-		Interval: *interval,
-		Timeout:  *timeout,
-		Count:    *count,
-		DNS:      !*noDNS,
-		AS:       !*noAS,
-	}, p)
-	defer eng.Close()
-
 	names := report.NameHost
 	if *noDNS {
 		names = report.NameIP
 	}
 
-	switch {
-	case *jsonStream:
-		eng.Run(ctx, func(s trace.Snapshot) { report.JSON(os.Stdout, s, false) })
-	case batch:
-		eng.Run(ctx, nil)
-		eng.WaitLookups(5 * time.Second)
-		s := eng.Snapshot()
-		switch *format {
-		case "json":
-			report.JSON(os.Stdout, s, true)
-		case "csv":
-			report.CSV(os.Stdout, s)
-		case "markdown", "md":
-			report.Markdown(os.Stdout, s, names, !*noAS)
-		default:
-			report.Text(os.Stdout, s, names, !*noAS, *wide)
+	var tabs []tui.Tab
+	for _, target := range flag.Args() {
+		ip, err := resolve(ctx, target, *only4, *only6)
+		if err != nil {
+			fail(err.Error())
 		}
-	default:
-		opt := tui.Options{Version: version, Names: names, ShowAS: !*noAS}
+		p, err := probe.New(ip, popts)
+		if err != nil {
+			fail(err.Error())
+		}
+		eng := trace.New(trace.Config{
+			Target:   target,
+			Probe:    probeDesc,
+			IP:       ip,
+			FirstTTL: *firstTTL,
+			MaxTTL:   *maxTTL,
+			GiveUp:   *giveUp,
+			Hide:     *hide,
+			Interval: *interval,
+			Timeout:  *timeout,
+			Count:    *count,
+			DNS:      !*noDNS,
+			AS:       !*noAS,
+		}, p)
+		defer eng.Close()
+		tab := tui.Tab{Eng: eng}
 		if net.ParseIP(target) == nil {
-			opt.Switch = func(v6 bool) (net.IP, probe.Prober, error) {
+			tab.Switch = func(v6 bool) (net.IP, probe.Prober, error) {
 				ip, err := resolve(ctx, target, !v6, v6)
 				if err != nil {
 					return nil, nil, err
@@ -203,10 +256,65 @@ func main() {
 				return ip, p, err
 			}
 		}
-		if err := tui.Run(ctx, eng, opt); err != nil {
+		tabs = append(tabs, tab)
+	}
+
+	switch {
+	case *jsonStream:
+		var mu sync.Mutex
+		runAll(ctx, tabs, func(s trace.Snapshot) {
+			mu.Lock()
+			report.JSON(os.Stdout, s, false)
+			mu.Unlock()
+		})
+	case batch:
+		runAll(ctx, tabs, nil)
+		var snaps []trace.Snapshot
+		for _, t := range tabs {
+			t.Eng.WaitLookups(5 * time.Second)
+			snaps = append(snaps, t.Eng.Snapshot())
+		}
+		switch *format {
+		case "json":
+			if len(snaps) == 1 {
+				report.JSON(os.Stdout, snaps[0], true)
+			} else {
+				report.JSONList(os.Stdout, snaps)
+			}
+		case "csv":
+			report.CSV(os.Stdout, snaps)
+		case "dot":
+			report.Dot(os.Stdout, snaps, names, !*noAS)
+		default:
+			for i, s := range snaps {
+				if i > 0 {
+					fmt.Println()
+				}
+				if *format == "text" {
+					report.Text(os.Stdout, s, names, !*noAS, *wide)
+				} else {
+					report.Markdown(os.Stdout, s, names, !*noAS)
+				}
+			}
+		}
+	default:
+		if err := tui.Run(ctx, tabs, tui.Options{Version: version, Names: names, ShowAS: !*noAS}); err != nil {
 			fail(err.Error())
 		}
 	}
+}
+
+// runAll traces all targets at the same time until each is done.
+func runAll(ctx context.Context, tabs []tui.Tab, update func(trace.Snapshot)) {
+	var wg sync.WaitGroup
+	for _, t := range tabs {
+		wg.Add(1)
+		go func(e *trace.Engine) {
+			defer wg.Done()
+			e.Run(ctx, update)
+		}(t.Eng)
+	}
+	wg.Wait()
 }
 
 func resolve(ctx context.Context, host string, only4, only6 bool) (net.IP, error) {

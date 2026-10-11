@@ -32,6 +32,37 @@ ttrace --json-stream host       one JSON line after every round
 
 Run `ttrace -h` for all options.
 
+### Several targets
+
+`ttrace example.com example.net` traces both at once. In the live view each
+target has a tab (Tab / arrow keys switch); reports print one after another.
+
+### Route as a picture
+
+`--format dot` writes the route as a [Graphviz](https://graphviz.org) graph,
+routers grouped by network operator (AS):
+
+```
+ttrace -c 10 --format dot example.com > route.dot
+dot -Tsvg route.dot -o route.svg
+```
+
+### Settings file
+
+Options you always use can go into a settings file, one per line, with the
+same names as on the command line:
+
+```
+# Linux: ~/.config/ttrace/config
+# macOS: ~/Library/Application Support/ttrace/config
+# Windows: %AppData%\ttrace\config
+interval = 2s
+give-up = 5
+no-as
+```
+
+Options on the command line win over the file. `--config path` reads another file.
+
 ### Probe types
 
 * **ICMP** (default) — echo requests, like `ping`. Works everywhere.
