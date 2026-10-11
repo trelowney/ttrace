@@ -189,7 +189,7 @@ func (d *DB) Download(ctx context.Context, progress func(done, total int64)) err
 			return err
 		}
 		req.Header.Set("User-Agent", "ttrace (https://github.com/trelowney/ttrace)")
-		r, err := http.DefaultClient.Do(req)
+		r, err := client.Do(req)
 		if err != nil {
 			return fmt.Errorf("cannot reach download.db-ip.com: %v — check the internet connection and try again", err)
 		}
@@ -243,6 +243,10 @@ func (d *DB) Download(ctx context.Context, progress func(done, total int64)) err
 	d.r = r
 	return nil
 }
+
+// client gives up when the server does not start answering in time; the
+// download itself may take long on slow lines and stops only on cancel.
+var client = &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, ResponseHeaderTimeout: 30 * time.Second}}
 
 type countReader struct {
 	r           io.Reader

@@ -132,6 +132,10 @@ func (v *view) drawMap(s trace.Snapshot, top, w, hgt int) {
 	}
 
 	avail := hgt - top - len(foot) - 1
+	if avail < 3 {
+		line("The window is too small for the map — make it taller, or press m to go back.", stMsg)
+		return
+	}
 	legend := len(groups)
 	if len(groups) == 0 {
 		legend = 2
