@@ -17,6 +17,7 @@ import (
 
 type Config struct {
 	Target   string // what the user typed
+	Probe    string // how probes are sent, shown to the user, e.g. "ICMP" or "UDP port 33434"
 	IP       net.IP
 	FirstTTL int // first hop to probe (default 1)
 	MaxTTL   int
@@ -50,6 +51,21 @@ type Hop struct {
 	Worst    float64   `json:"worst_ms"`
 	StDev    float64   `json:"stdev_ms"`
 	Recent   []float64 `json:"recent_ms,omitempty"` // last rounds, oldest first; -1 = no answer
+	MPLS     []int     `json:"mpls,omitempty"`      // MPLS labels reported by the router
+	Others   []Other   `json:"others,omitempty"`    // more routers that answered for this hop (parallel paths)
+}
+
+// Other is an additional address that answered for the same hop, usually
+// because traffic is spread over parallel paths (ECMP).
+type Other struct {
+	Addr    string `json:"addr"`
+	Host    string `json:"host,omitempty"`
+	ASN     string `json:"asn,omitempty"`
+	ASName  string `json:"as_name,omitempty"`
+	Country string `json:"country,omitempty"`
+	Private bool   `json:"private,omitempty"`
+	Seen    int    `json:"seen"` // how many answers came from this address
+	MPLS    []int  `json:"mpls,omitempty"`
 }
 
 // Snapshot is a consistent copy of the current state.
@@ -57,6 +73,7 @@ type Snapshot struct {
 	Target  string `json:"target"`
 	IP      string `json:"ip"`
 	Family  string `json:"family"` // "IPv4" or "IPv6"
+	Probe   string `json:"probe,omitempty"`
 	Round   int    `json:"round"`
 	Reached bool   `json:"reached"`
 	Hops    []Hop  `json:"hops"`
@@ -66,7 +83,10 @@ type Snapshot struct {
 const RecentLen = 60
 
 type hopStats struct {
-	addr                    string
+	addr                    string         // first address that answered
+	order                   []string       // all answering addresses, first seen first
+	seen                    map[string]int // answers per address
+	mpls                    map[string][]int
 	sent, recv              int
 	last, best, worst, mean float64
 	m2                      float64 // Welford running variance
@@ -262,7 +282,17 @@ func (e *Engine) record(results []probe.Result, gen int) bool {
 		h.m2 += d * (ms - h.mean)
 
 		addr := r.Addr.String()
-		h.addr = addr
+		if h.seen == nil {
+			h.addr = addr
+			h.seen, h.mpls = map[string]int{}, map[string][]int{}
+		}
+		if h.seen[addr] == 0 {
+			h.order = append(h.order, addr)
+		}
+		h.seen[addr]++
+		if r.MPLS != nil {
+			h.mpls[addr] = r.MPLS
+		}
 		if !e.asked[addr] {
 			e.asked[addr] = true
 			e.lookup(r.Addr)
@@ -324,7 +354,7 @@ func (e *Engine) WaitLookups(d time.Duration) {
 func (e *Engine) Snapshot() Snapshot {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	s := Snapshot{Target: e.cfg.Target, IP: e.cfg.IP.String(), Family: "IPv4", Round: e.round, Reached: e.destTTL > 0}
+	s := Snapshot{Target: e.cfg.Target, IP: e.cfg.IP.String(), Family: "IPv4", Round: e.round, Reached: e.destTTL > 0, Probe: e.cfg.Probe}
 	if e.cfg.IP.To4() == nil {
 		s.Family = "IPv6"
 	}
@@ -362,6 +392,14 @@ func (e *Engine) Snapshot() Snapshot {
 			if a, ok := e.asinfo[h.addr]; ok {
 				row.ASN, row.ASName, row.Country = a.ASN, a.Name, a.Country
 				row.Prefix, row.Registry, row.Private = a.Prefix, a.Registry, a.Private
+			}
+			row.MPLS = h.mpls[h.addr]
+			for _, addr := range h.order[1:] {
+				o := Other{Addr: addr, Host: e.names[addr], Seen: h.seen[addr], MPLS: h.mpls[addr]}
+				if a, ok := e.asinfo[addr]; ok {
+					o.ASN, o.ASName, o.Country, o.Private = a.ASN, a.Name, a.Country, a.Private
+				}
+				row.Others = append(row.Others, o)
 			}
 		}
 		s.Hops = append(s.Hops, row)

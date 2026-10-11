@@ -36,6 +36,8 @@ Examples:
   ttrace -r -c 10 example.com             run 10 rounds and print a report
   ttrace -r --format markdown example.com report as a Markdown table
   ttrace --hide 2 example.com             hide your own first 2 hops (for screenshots)
+  ttrace -P tcp -p 443 example.com        probe with TCP to port 443, gets through most firewalls
+  ttrace -P udp example.com               probe with UDP; also shows parallel paths (ECMP)
 
 Options:
 `
@@ -54,7 +56,9 @@ func main() {
 		maxTTL     = flag.Int("m", 30, "maximum number of hops")
 		giveUp     = flag.Int("give-up", 0, "stop probing past this many silent hops in a row after the last answer (0 = never)")
 		hide       = flag.Int("hide", 0, "hide address, name and AS of the first N hops, e.g. your home network")
-		size       = flag.Int("s", 64, "packet size in bytes, including IP and ICMP headers")
+		probeType  = flag.String("P", "icmp", "probe type: icmp, udp or tcp (udp and tcp: Linux and macOS only)")
+		port       = flag.Int("p", 0, "destination port for -P udp (default 33434) and -P tcp (default 80)")
+		size       = flag.Int("s", 64, "packet size in bytes, including IP and ICMP/UDP headers (not used with -P tcp)")
 		tos        = flag.Int("tos", 0, "TOS / traffic class byte, e.g. 184 for DSCP EF")
 		source     = flag.String("a", "", "send from this local IP address")
 		only4      = flag.Bool("4", false, "use IPv4 only")
@@ -89,6 +93,17 @@ func main() {
 	if *tos < 0 || *tos > 255 {
 		fail("--tos must be between 0 and 255")
 	}
+	switch *probeType {
+	case "icmp", "udp", "tcp":
+	default:
+		fail("-P must be icmp, udp or tcp")
+	}
+	if *port < 0 || *port > 65535 {
+		fail("-p must be a port number between 1 and 65535")
+	}
+	if *port != 0 && *probeType == "icmp" {
+		fail("-p only works with UDP or TCP probes, add -P udp or -P tcp")
+	}
 	if *jsonMode {
 		*reportMode, *format = true, "json"
 	}
@@ -97,7 +112,20 @@ func main() {
 	default:
 		fail("--format must be text, json, csv or markdown")
 	}
-	popts := probe.Options{Size: *size, TOS: *tos}
+	popts := probe.Options{Size: *size, TOS: *tos, Proto: *probeType, Port: *port}
+	probeDesc := "ICMP"
+	switch *probeType {
+	case "udp":
+		if *port == 0 {
+			*port = probe.DefaultUDPPort
+		}
+		probeDesc = fmt.Sprintf("UDP port %d", *port)
+	case "tcp":
+		if *port == 0 {
+			*port = probe.DefaultTCPPort
+		}
+		probeDesc = fmt.Sprintf("TCP port %d", *port)
+	}
 	if *source != "" {
 		if popts.Source = net.ParseIP(*source); popts.Source == nil {
 			fail("-a needs an IP address, e.g. -a 192.0.2.5")
@@ -124,6 +152,7 @@ func main() {
 	}
 	eng := trace.New(trace.Config{
 		Target:   target,
+		Probe:    probeDesc,
 		IP:       ip,
 		FirstTTL: *firstTTL,
 		MaxTTL:   *maxTTL,

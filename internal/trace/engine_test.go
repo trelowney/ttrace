@@ -85,3 +85,46 @@ func TestGiveUp(t *testing.T) {
 		t.Errorf("hop4 sent %d (want 2), hop5 sent %d (want 1)", e.hops[3].sent, e.hops[4].sent)
 	}
 }
+
+// ecmpProber: hop 2 alternates between two routers, one of them reports an MPLS label.
+type ecmpProber struct{ dst net.IP }
+
+func (ecmpProber) Close() error { return nil }
+func (f ecmpProber) Probe(_ context.Context, ttl, seq int, _ time.Duration) probe.Result {
+	r := probe.Result{TTL: ttl, Seq: seq, RTT: time.Millisecond}
+	switch ttl {
+	case 1:
+		r.Addr = net.ParseIP("192.168.1.1")
+	case 2:
+		r.Addr = net.ParseIP("198.51.100.1")
+		if seq%2 == 0 {
+			r.Addr, r.MPLS = net.ParseIP("198.51.100.2"), []int{24001}
+		}
+	default:
+		r.Addr, r.Reached = f.dst, true
+	}
+	return r
+}
+
+func TestOthersAndMPLS(t *testing.T) {
+	dst := net.ParseIP("192.0.2.10")
+	e := New(Config{Target: "x", IP: dst, MaxTTL: 30, Interval: time.Millisecond, Timeout: time.Second, Count: 4}, ecmpProber{dst})
+	e.Run(context.Background(), nil)
+	h := e.Snapshot().Hops[1]
+	if len(h.Others) != 1 || h.Others[0].Seen+countOf(h, e) != 4 {
+		t.Fatalf("others: %+v", h.Others)
+	}
+	withLabel := h.MPLS
+	if h.Addr == "198.51.100.1" {
+		withLabel = h.Others[0].MPLS
+	}
+	if len(withLabel) != 1 || withLabel[0] != 24001 {
+		t.Errorf("mpls: main %v, other %v", h.MPLS, h.Others[0].MPLS)
+	}
+}
+
+func countOf(h Hop, e *Engine) int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.hops[h.TTL-1].seen[h.Addr]
+}

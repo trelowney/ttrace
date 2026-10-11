@@ -32,6 +32,21 @@ ttrace --json-stream host       one JSON line after every round
 
 Run `ttrace -h` for all options.
 
+### Probe types
+
+* **ICMP** (default) — echo requests, like `ping`. Works everywhere.
+* **UDP** (`-P udp`, port 33434 unless `-p` says otherwise) — every probe
+  leaves from a new source port, so routers that spread traffic over parallel
+  links (ECMP) show up as extra lines under a hop.
+* **TCP** (`-P tcp`, port 80 unless `-p` says otherwise) — opens a connection,
+  which gets through firewalls that drop ICMP and UDP. Use the port of a
+  service the target really runs, e.g. `-P tcp -p 443`.
+
+UDP and TCP probes work on Linux and macOS; Windows has ICMP only for now.
+
+Routers that report **MPLS labels** (RFC 4950) get a `[MPLS …]` line under
+their hop, in every probe type.
+
 ### Permissions
 
 * **Linux:** sending raw ICMP needs root. Either use `sudo`, or allow it once:

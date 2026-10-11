@@ -55,6 +55,9 @@ type winProber struct {
 
 // New prepares probing towards dst and checks that the ICMP API is usable.
 func New(dst net.IP, opts Options) (Prober, error) {
+	if opts.Proto != "" && opts.Proto != "icmp" {
+		return nil, errors.New("UDP and TCP probes are not supported on Windows yet; leave out -P to use ICMP")
+	}
 	if opts.Source != nil {
 		return nil, errors.New("choosing the source address (-a) is not supported on Windows yet")
 	}

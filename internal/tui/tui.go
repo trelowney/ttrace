@@ -161,6 +161,9 @@ func (v *view) draw() {
 		x = v.put(x, 0, " ("+s.IP+")", stDim)
 	}
 	x = v.put(x, 0, "  "+s.Family, stAS)
+	if s.Probe != "" {
+		x = v.put(x, 0, " "+s.Probe, stAS)
+	}
 	v.put(x, 0, "   "+state, stDim)
 	if v.msg != "" && time.Now().Before(v.msgEnd) {
 		v.put(0, 1, v.msg, stMsg)
@@ -197,9 +200,9 @@ func (v *view) draw() {
 	}
 	v.put(0, 3, report.Fit(head, w), stHead)
 
-	for i, h := range s.Hops {
-		y := 4 + i
-		if y >= hgt {
+	y := 3
+	for _, h := range s.Hops {
+		if y++; y >= hgt {
 			break
 		}
 		x := v.put(0, y, fmt.Sprintf("%3d ", h.TTL), stDim)
@@ -226,11 +229,39 @@ func (v *view) draw() {
 		} else {
 			v.put(x, y, " "+report.Stats(h), st)
 		}
+		y = v.extra(y, h, hostW, nameW, hgt)
 	}
 	if len(s.Hops) == 0 {
 		v.put(0, 4, "waiting for the first round…", stDim)
 	}
 	v.scr.Show()
+}
+
+// extra draws the lines under a hop: its MPLS labels and the other routers
+// that answered for it. Returns the last line used.
+func (v *view) extra(y int, h trace.Hop, hostW, nameW, hgt int) int {
+	if l := report.MPLS(h.MPLS); l != "" && y+1 < hgt {
+		y++
+		v.put(6, y, "["+l+"]", stDim)
+	}
+	for _, o := range h.Others {
+		if y+1 >= hgt {
+			break
+		}
+		y++
+		x := v.put(4, y, report.Fit(report.OtherLabel(o, v.opt.Names), hostW), stDim)
+		if v.opt.ShowAS {
+			x = v.put(x, y, " "+report.Fit(report.OtherASN(o), 9)+" ", stAS)
+			x = v.put(x, y, report.Fit(o.ASName, nameW)+" ", stDim)
+			x = v.put(x, y, report.Fit(o.Country, 2)+" ", stDim)
+		}
+		note := " " + report.Seen(o)
+		if l := report.MPLS(o.MPLS); l != "" {
+			note += "  [" + l + "]"
+		}
+		v.put(x, y, note, stDim)
+	}
+	return y
 }
 
 var levels = []rune("▁▂▃▄▅▆▇█")
