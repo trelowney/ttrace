@@ -14,7 +14,6 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.Foundation;
-using Windows.System;
 
 namespace TtraceGui;
 
@@ -75,7 +74,7 @@ public sealed partial class MainWindow : Window
 
     private void TargetBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
-        if (e.Key != VirtualKey.Enter) return;
+        if (e.Key != Windows.System.VirtualKey.Enter) return;
         e.Handled = true;
         Start();
     }
