@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/trelowney/ttrace/internal/asinfo"
+	"github.com/trelowney/ttrace/internal/geo"
 	"github.com/trelowney/ttrace/internal/probe"
 )
 
@@ -28,7 +29,8 @@ type Config struct {
 	Timeout  time.Duration
 	Count    int  // rounds to run, 0 = until cancelled
 	DNS      bool // reverse DNS lookups
-	AS       bool // AS lookups
+	AS       bool    // AS lookups
+	Geo      *geo.DB // approximate places of routers; nil or not downloaded = none
 }
 
 // Hop is one row of the result. Times are in milliseconds.
@@ -54,6 +56,7 @@ type Hop struct {
 	Recent   []float64 `json:"recent_ms,omitempty"` // last rounds, oldest first; -1 = no answer
 	MPLS     []int     `json:"mpls,omitempty"`      // MPLS labels reported by the router
 	Others   []Other   `json:"others,omitempty"`    // more routers that answered for this hop (parallel paths)
+	Place    *geo.Place `json:"place,omitempty"`    // approximate place of the router (needs the location database)
 }
 
 // Other is an additional address that answered for the same hop, usually
@@ -435,6 +438,9 @@ func (e *Engine) Snapshot() Snapshot {
 				row.Prefix, row.Registry, row.Private = a.Prefix, a.Registry, a.Private
 			}
 			row.MPLS = h.mpls[h.addr]
+			if p, ok := e.cfg.Geo.Lookup(net.ParseIP(h.addr)); ok {
+				row.Place = &p
+			}
 			for _, addr := range h.order[1:] {
 				o := Other{Addr: addr, Host: e.names[addr], Seen: h.seen[addr], MPLS: h.mpls[addr]}
 				if a, ok := e.asinfo[addr]; ok {

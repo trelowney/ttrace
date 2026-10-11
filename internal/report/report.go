@@ -91,6 +91,9 @@ func ASN(h trace.Hop) string {
 
 // Fit cuts s to n runes (with an ellipsis) or pads it with spaces.
 func Fit(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
 	r := []rune(s)
 	if len(r) > n {
 		if n <= 1 {
@@ -176,7 +179,7 @@ func ms(v float64, recv int) string {
 func CSV(w io.Writer, snaps []trace.Snapshot) error {
 	c := csv.NewWriter(w)
 	c.Write([]string{"target", "ip", "ttl", "host", "addr", "asn", "as_name", "country", "prefix", "registry",
-		"loss_pct", "sent", "recv", "last_ms", "avg_ms", "best_ms", "worst_ms", "stdev_ms", "mpls", "other_addrs"})
+		"loss_pct", "sent", "recv", "last_ms", "avg_ms", "best_ms", "worst_ms", "stdev_ms", "mpls", "other_addrs", "place", "lat", "lon"})
 	for _, s := range snaps {
 		for _, h := range s.Hops {
 			host := h.Host
@@ -187,10 +190,15 @@ func CSV(w io.Writer, snaps []trace.Snapshot) error {
 			for _, o := range h.Others {
 				others = append(others, o.Addr)
 			}
+			place, lat, lon := "", "", ""
+			if h.Place != nil {
+				place = h.Place.Name()
+				lat, lon = strconv.FormatFloat(h.Place.Lat, 'f', 4, 64), strconv.FormatFloat(h.Place.Lon, 'f', 4, 64)
+			}
 			c.Write([]string{s.Target, s.IP, strconv.Itoa(h.TTL), host, h.Addr, ASN(h), h.ASName, h.Country, h.Prefix, h.Registry,
 				strconv.FormatFloat(h.Loss, 'f', 1, 64), strconv.Itoa(h.Sent), strconv.Itoa(h.Recv),
 				ms(h.Last, h.Recv), ms(h.Avg, h.Recv), ms(h.Best, h.Recv), ms(h.Worst, h.Recv), ms(h.StDev, h.Recv),
-				strings.TrimPrefix(MPLS(h.MPLS), "MPLS "), strings.Join(others, " ")})
+				strings.TrimPrefix(MPLS(h.MPLS), "MPLS "), strings.Join(others, " "), place, lat, lon})
 		}
 	}
 	c.Flush()

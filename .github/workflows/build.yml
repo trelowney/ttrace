@@ -22,6 +22,9 @@ jobs:
       - name: Dependencies
         run: go mod tidy && git diff --stat
 
+      - name: Formatting (only reported)
+        run: gofmt -l . || true
+
       - name: Vet (linux, macOS, windows)
         run: |
           go vet ./...

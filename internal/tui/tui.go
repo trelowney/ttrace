@@ -5,10 +5,12 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
 
+	"github.com/trelowney/ttrace/internal/geo"
 	"github.com/trelowney/ttrace/internal/probe"
 	"github.com/trelowney/ttrace/internal/report"
 	"github.com/trelowney/ttrace/internal/trace"
@@ -28,6 +30,7 @@ type Options struct {
 	Version string
 	Names   report.NameMode
 	ShowAS  bool
+	Geo     *geo.DB // for the map; may be nil
 }
 
 type view struct {
@@ -37,6 +40,8 @@ type view struct {
 	eng    *trace.Engine // engine of the current tab
 	opt    Options
 	pulse  bool // show recent latency bars instead of statistics
+	world  bool // show the map instead of the table
+	dl     download
 	msg    string
 	msgEnd time.Time
 }
@@ -97,7 +102,11 @@ func Run(ctx context.Context, tabs []Tab, opt Options) error {
 			case ev.Rune() == 'a':
 				v.opt.ShowAS = !v.opt.ShowAS
 			case ev.Rune() == 'd':
-				v.pulse = !v.pulse
+				v.pulse, v.world = !v.pulse, false
+			case ev.Rune() == 'm':
+				v.world = !v.world
+			case ev.Rune() == 'g' && v.world:
+				v.startDownload(ctx)
 			case ev.Rune() == '4', ev.Rune() == '6':
 				v.switchFamily(ev.Rune() == '6')
 			}
@@ -189,7 +198,10 @@ func (v *view) draw() {
 	if v.msg != "" && time.Now().Before(v.msgEnd) {
 		v.put(0, 1, v.msg, stMsg)
 	} else {
-		keys := fmt.Sprintf("keys: q quit  p pause  r reset  n names (%s)  a AS  d pulse  4/6 IPv4/IPv6", v.opt.Names)
+		keys := fmt.Sprintf("keys: q quit  p pause  r reset  n names (%s)  a AS  d pulse  m map  4/6 IPv4/IPv6", v.opt.Names)
+		if v.world {
+			keys = "keys: m back to the table  q quit  p pause  r reset"
+		}
 		if len(v.tabs) > 1 {
 			keys += "  Tab next target"
 		}
@@ -204,6 +216,12 @@ func (v *view) draw() {
 			}
 			x = v.put(x, 2, fmt.Sprintf(" %d %s ", i+1, t.Eng.Snapshot().Target), st) + 1
 		}
+	}
+
+	if v.world {
+		v.drawMap(s, 3, w, hgt)
+		v.scr.Show()
+		return
 	}
 
 	// columns: "#" 4, host flexible, AS block, stats (or pulse)

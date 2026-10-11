@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/trelowney/ttrace/internal/config"
-
+	"github.com/trelowney/ttrace/internal/geo"
 	"github.com/trelowney/ttrace/internal/probe"
 	"github.com/trelowney/ttrace/internal/report"
 	"github.com/trelowney/ttrace/internal/trace"
@@ -45,6 +45,8 @@ Examples:
   ttrace example.com example.net          two targets at once, Tab switches between them
   ttrace -r --format dot example.com > route.dot && dot -Tsvg route.dot -o route.svg
                                           draw the route as a picture with Graphviz
+  ttrace --geo-update                     download the location database for the map
+                                          (%s, once; key m in the live view shows the map)
 
 Settings file: options can also be written into %s,
 one per line with the same names as below, e.g. "interval = 2s" or "no-as".
@@ -56,7 +58,7 @@ Options:
 func main() {
 	defaultConfig := config.DefaultPath()
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), usage, version, defaultConfig)
+		fmt.Fprintf(flag.CommandLine.Output(), usage, version, geo.Size, defaultConfig)
 		flag.PrintDefaults()
 	}
 	flag.String("config", defaultConfig, "settings file to read")
@@ -105,7 +107,7 @@ func loadConfig(def string) {
 type options struct {
 	count, firstTTL, maxTTL, giveUp, hide, size, tos, port *int
 	reportMode, jsonMode, wide, jsonStream, only4, only6   *bool
-	noDNS, noAS, showVer                                   *bool
+	noDNS, noAS, showVer, geoUpdate                        *bool
 	format, source, probeType                              *string
 	interval, timeout                                      *time.Duration
 }
@@ -134,6 +136,7 @@ func defineFlags() options {
 		noDNS:      flag.Bool("n", false, "do not look up host names, show IP addresses (key n in the live view switches name / IP / both)"),
 		noAS:       flag.Bool("no-as", false, "do not look up AS number, AS name and country"),
 		showVer:    flag.Bool("v", false, "print version and exit"),
+		geoUpdate:  flag.Bool("geo-update", false, "download or refresh the location database for the map ("+geo.Size+", from db-ip.com) and exit"),
 	}
 }
 
@@ -146,6 +149,14 @@ func run(o options) {
 	if *showVer {
 		fmt.Println("ttrace", version)
 		return
+	}
+	gdb, gerr := geo.Open(geo.DefaultPath())
+	if *o.geoUpdate {
+		updateGeo(gdb)
+		return
+	}
+	if gerr != nil {
+		fmt.Fprintln(os.Stderr, "ttrace:", gerr) // the trace still works, only without places
 	}
 	if flag.NArg() < 1 {
 		flag.Usage()
@@ -240,6 +251,7 @@ func run(o options) {
 			Count:    *count,
 			DNS:      !*noDNS,
 			AS:       !*noAS,
+			Geo:      gdb,
 		}, p)
 		defer eng.Close()
 		tab := tui.Tab{Eng: eng}
@@ -298,10 +310,32 @@ func run(o options) {
 			}
 		}
 	default:
-		if err := tui.Run(ctx, tabs, tui.Options{Version: version, Names: names, ShowAS: !*noAS}); err != nil {
+		if err := tui.Run(ctx, tabs, tui.Options{Version: version, Names: names, ShowAS: !*noAS, Geo: gdb}); err != nil {
 			fail(err.Error())
 		}
 	}
+}
+
+// updateGeo downloads the location database with a progress line.
+func updateGeo(d *geo.DB) {
+	fmt.Fprintf(os.Stderr, "Downloading the location database (%s) from db-ip.com…\n", geo.Size)
+	last := time.Time{}
+	err := d.Download(context.Background(), func(done, total int64) {
+		if time.Since(last) < 200*time.Millisecond {
+			return
+		}
+		last = time.Now()
+		if total > 0 {
+			fmt.Fprintf(os.Stderr, "\r  %d of %d MB", done>>20, total>>20)
+		} else {
+			fmt.Fprintf(os.Stderr, "\r  %d MB", done>>20)
+		}
+	})
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		fail(err.Error())
+	}
+	fmt.Fprintf(os.Stderr, "Saved to %s\nThe live view now shows the route on a map: press m.\n%s\n", d.Path(), geo.Attribution)
 }
 
 // runAll traces all targets at the same time until each is done.

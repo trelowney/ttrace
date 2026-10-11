@@ -47,6 +47,23 @@ ttrace -c 10 --format dot example.com > route.dot
 dot -Tsvg route.dot -o route.svg
 ```
 
+### Route on a map
+
+Press **m** in the live view to see the route drawn on a world map in the
+terminal. The first time, ttrace asks to download a database of IP locations
+(about 60 MB, once; press **g**). It can also be fetched or refreshed from the
+command line:
+
+```
+ttrace --geo-update
+```
+
+Once downloaded, JSON and CSV output also contain the approximate place
+(city, country, latitude, longitude) of every router.
+
+Router places are **approximate** — often only the city or even the country of
+the network owner, not where the router really stands.
+
 ### Settings file
 
 Options you always use can go into a settings file, one per line, with the
@@ -91,6 +108,12 @@ AS number, prefix, country and AS name come from the free
 [Team Cymru IP to ASN service](https://www.team-cymru.com/ip-asn-mapping) over DNS.
 The country is where the address block is **registered**, which is not always
 where the router physically stands.
+
+Places on the map come from the free
+[DB-IP IP to City Lite](https://db-ip.com/db/download/ip-to-city-lite) database
+(IP Geolocation by [DB-IP](https://db-ip.com), CC BY 4.0), which ttrace
+downloads into your cache folder when you ask for it. The land outline is
+[Natural Earth](https://www.naturalearthdata.com) 1:50m land (public domain).
 
 ## License
 
