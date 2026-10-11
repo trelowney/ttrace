@@ -51,7 +51,9 @@ func Dot(w io.Writer, snaps []trace.Snapshot, m NameMode, showAS bool) {
 		}
 	}
 
-	q := func(v string) string { return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(v) + `"` }
+	q := func(v string) string {
+		return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`).Replace(v) + `"`
+	}
 	fmt.Fprintf(w, "digraph ttrace {\n")
 	fmt.Fprintf(w, "  label=%s;\n  labelloc=t;\n  rankdir=TB;\n", q("ttrace to "+strings.Join(titles, ", ")))
 	fmt.Fprintf(w, "  node [shape=box, style=rounded, fontname=\"Helvetica\", fontsize=10];\n")
@@ -85,9 +87,6 @@ func Dot(w io.Writer, snaps []trace.Snapshot, m NameMode, showAS bool) {
 			if k != "private" {
 				n := nodes[addrs[0]]
 				title = strings.TrimSpace(k + " " + n.asName)
-				if n.country != "" {
-					title += " (" + n.country + ")"
-				}
 			}
 			fmt.Fprintf(w, "  subgraph %s {\n    label=%s;\n    style=dashed;\n", q("cluster_"+k), q(title))
 			indent = "    "
