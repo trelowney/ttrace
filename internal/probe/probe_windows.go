@@ -5,6 +5,7 @@ package probe
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"net"
 	"time"
 	"unsafe"
@@ -46,13 +47,19 @@ const (
 )
 
 type winProber struct {
-	dst net.IP
-	v6  bool
+	dst     net.IP
+	v6      bool
+	tos     uint8
+	payload []byte
 }
 
 // New prepares probing towards dst and checks that the ICMP API is usable.
-func New(dst net.IP) (Prober, error) {
-	p := &winProber{dst: dst, v6: dst.To4() == nil}
+func New(dst net.IP, opts Options) (Prober, error) {
+	if opts.Source != nil {
+		return nil, errors.New("choosing the source address (-a) is not supported on Windows yet")
+	}
+	v6 := dst.To4() == nil
+	p := &winProber{dst: dst, v6: v6, tos: uint8(opts.TOS), payload: makePayload(opts.Size, v6)}
 	h, err := p.open()
 	if err != nil {
 		return nil, err
@@ -87,8 +94,8 @@ func (p *winProber) Probe(ctx context.Context, ttl, seq int, timeout time.Durati
 	}
 	defer procIcmpCloseHandle.Call(h)
 
-	opts := ipOptionInformation{TTL: uint8(ttl)}
-	req := payload
+	opts := ipOptionInformation{TTL: uint8(ttl), Tos: p.tos}
+	req := p.payload
 	buf := make([]byte, 1024)
 	ms := uintptr(timeout.Milliseconds())
 

@@ -28,9 +28,10 @@ type reply struct {
 
 type unixProber struct {
 	dst  net.IP
-	v6   bool
-	id   int
-	conn *icmp.PacketConn
+	v6      bool
+	id      int
+	conn    *icmp.PacketConn
+	payload []byte
 
 	wmu sync.Mutex // set TTL + write must not interleave between probes
 
@@ -41,21 +42,39 @@ type unixProber struct {
 }
 
 // New opens a raw ICMP socket towards dst.
-func New(dst net.IP) (Prober, error) {
+func New(dst net.IP, opts Options) (Prober, error) {
 	v6 := dst.To4() == nil
 	network, laddr := "ip4:icmp", "0.0.0.0"
 	if v6 {
 		network, laddr = "ip6:ipv6-icmp", "::"
 	}
+	if opts.Source != nil {
+		if (opts.Source.To4() == nil) != v6 {
+			return nil, fmt.Errorf("source address %s is not the same IP version as the target %s", opts.Source, dst)
+		}
+		laddr = opts.Source.String()
+	}
 	c, err := icmp.ListenPacket(network, laddr)
 	if err != nil {
 		return nil, permissionHint(err)
+	}
+	if opts.TOS != 0 {
+		if v6 {
+			err = c.IPv6PacketConn().SetTrafficClass(opts.TOS)
+		} else {
+			err = c.IPv4PacketConn().SetTOS(opts.TOS)
+		}
+		if err != nil {
+			c.Close()
+			return nil, fmt.Errorf("cannot set TOS: %w", err)
+		}
 	}
 	p := &unixProber{
 		dst:     dst,
 		v6:      v6,
 		id:      os.Getpid() & 0xffff,
 		conn:    c,
+		payload: makePayload(opts.Size, v6),
 		pending: map[int]chan reply{},
 		closed:  make(chan struct{}),
 	}
@@ -99,7 +118,7 @@ func (p *unixProber) Probe(ctx context.Context, ttl, seq int, timeout time.Durat
 	if p.v6 {
 		typ = ipv6.ICMPTypeEchoRequest
 	}
-	msg := icmp.Message{Type: typ, Body: &icmp.Echo{ID: p.id, Seq: seq, Data: payload}}
+	msg := icmp.Message{Type: typ, Body: &icmp.Echo{ID: p.id, Seq: seq, Data: p.payload}}
 	b, err := msg.Marshal(nil) // ICMPv6 checksum is filled in by the kernel
 	if err != nil {
 		return res

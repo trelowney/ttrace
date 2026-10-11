@@ -2,9 +2,11 @@
 package report
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/trelowney/ttrace/internal/trace"
@@ -25,6 +27,9 @@ func (m NameMode) String() string {
 
 // Label is the host column text.
 func Label(h trace.Hop, m NameMode) string {
+	if h.Hidden {
+		return "(hidden)"
+	}
 	if h.Addr == "" {
 		return "???"
 	}
@@ -70,19 +75,21 @@ func Stats(h trace.Hop) string {
 
 const StatsHeader = " Loss%  Snt   Last    Avg   Best   Wrst  StDev"
 
-// Text writes an mtr-style report.
-func Text(w io.Writer, s trace.Snapshot, m NameMode, showAS bool) {
-	host := 20
+// Text writes a plain table. wide = never shorten host and AS names.
+func Text(w io.Writer, s trace.Snapshot, m NameMode, showAS, wide bool) {
+	host, name := 20, 20
 	for _, h := range s.Hops {
 		if l := len([]rune(Label(h, m))); l > host {
 			host = l
 		}
+		if l := len([]rune(h.ASName)); wide && l > name {
+			name = l
+		}
 	}
-	if host > 50 {
+	if host > 50 && !wide {
 		host = 50
 	}
-	name := 20
-	fmt.Fprintf(w, "ttrace to %s (%s), %d rounds\n", s.Target, s.IP, s.Round)
+	fmt.Fprintf(w, "ttrace to %s (%s, %s), %d rounds\n", s.Target, s.IP, s.Family, s.Round)
 	head := fmt.Sprintf("%3s  %s", "#", Fit("Host", host))
 	if showAS {
 		head += fmt.Sprintf("  %-9s %s %-2s", "ASN", Fit("AS name", name), "CC")
@@ -97,6 +104,53 @@ func Text(w io.Writer, s trace.Snapshot, m NameMode, showAS bool) {
 	}
 	if !s.Reached {
 		fmt.Fprintln(w, "Target did not answer.")
+	}
+}
+
+func ms(v float64, recv int) string {
+	if recv == 0 {
+		return ""
+	}
+	return strconv.FormatFloat(v, 'f', 2, 64)
+}
+
+// CSV writes one line per hop with a header line.
+func CSV(w io.Writer, s trace.Snapshot) error {
+	c := csv.NewWriter(w)
+	c.Write([]string{"target", "ip", "ttl", "host", "addr", "asn", "as_name", "country", "prefix", "registry",
+		"loss_pct", "sent", "recv", "last_ms", "avg_ms", "best_ms", "worst_ms", "stdev_ms"})
+	for _, h := range s.Hops {
+		host := h.Host
+		if h.Hidden {
+			host = "(hidden)"
+		}
+		c.Write([]string{s.Target, s.IP, strconv.Itoa(h.TTL), host, h.Addr, ASN(h), h.ASName, h.Country, h.Prefix, h.Registry,
+			strconv.FormatFloat(h.Loss, 'f', 1, 64), strconv.Itoa(h.Sent), strconv.Itoa(h.Recv),
+			ms(h.Last, h.Recv), ms(h.Avg, h.Recv), ms(h.Best, h.Recv), ms(h.Worst, h.Recv), ms(h.StDev, h.Recv)})
+	}
+	c.Flush()
+	return c.Error()
+}
+
+// Markdown writes a table for pasting into tickets, chats and wikis.
+func Markdown(w io.Writer, s trace.Snapshot, m NameMode, showAS bool) {
+	esc := func(v string) string { return strings.ReplaceAll(v, "|", "\\|") }
+	fmt.Fprintf(w, "**ttrace to %s** (%s, %s), %d rounds\n\n", esc(s.Target), s.IP, s.Family, s.Round)
+	if showAS {
+		fmt.Fprintln(w, "| # | Host | ASN | AS name | CC | Loss % | Sent | Last | Avg | Best | Worst | StDev |")
+		fmt.Fprintln(w, "|--:|:--|:--|:--|:--|--:|--:|--:|--:|--:|--:|--:|")
+	} else {
+		fmt.Fprintln(w, "| # | Host | Loss % | Sent | Last | Avg | Best | Worst | StDev |")
+		fmt.Fprintln(w, "|--:|:--|--:|--:|--:|--:|--:|--:|--:|")
+	}
+	for _, h := range s.Hops {
+		row := fmt.Sprintf("| %d | %s |", h.TTL, esc(Label(h, m)))
+		if showAS {
+			row += fmt.Sprintf(" %s | %s | %s |", ASN(h), esc(h.ASName), h.Country)
+		}
+		row += fmt.Sprintf(" %.1f | %d | %s | %s | %s | %s | %s |", h.Loss, h.Sent,
+			ms(h.Last, h.Recv), ms(h.Avg, h.Recv), ms(h.Best, h.Recv), ms(h.Worst, h.Recv), ms(h.StDev, h.Recv))
+		fmt.Fprintln(w, row)
 	}
 }
 

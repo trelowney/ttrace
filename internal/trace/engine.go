@@ -18,7 +18,10 @@ import (
 type Config struct {
 	Target   string // what the user typed
 	IP       net.IP
+	FirstTTL int // first hop to probe (default 1)
 	MaxTTL   int
+	GiveUp   int // stop probing after this many silent hops in a row past the last answer (0 = never)
+	Hide     int // hide address, name and AS of the first N hops (for screenshots)
 	Interval time.Duration
 	Timeout  time.Duration
 	Count    int  // rounds to run, 0 = until cancelled
@@ -28,50 +31,58 @@ type Config struct {
 
 // Hop is one row of the result. Times are in milliseconds.
 type Hop struct {
-	TTL      int     `json:"ttl"`
-	Addr     string  `json:"addr,omitempty"`
-	Host     string  `json:"host,omitempty"`
-	ASN      string  `json:"asn,omitempty"`
-	ASName   string  `json:"as_name,omitempty"`
-	Country  string  `json:"country,omitempty"`
-	Prefix   string  `json:"prefix,omitempty"`
-	Registry string  `json:"registry,omitempty"`
-	Private  bool    `json:"private,omitempty"`
-	Sent     int     `json:"sent"`
-	Recv     int     `json:"recv"`
-	Loss     float64 `json:"loss_pct"`
-	Last     float64 `json:"last_ms"`
-	Avg      float64 `json:"avg_ms"`
-	Best     float64 `json:"best_ms"`
-	Worst    float64 `json:"worst_ms"`
-	StDev    float64 `json:"stdev_ms"`
+	TTL      int       `json:"ttl"`
+	Addr     string    `json:"addr,omitempty"`
+	Host     string    `json:"host,omitempty"`
+	ASN      string    `json:"asn,omitempty"`
+	ASName   string    `json:"as_name,omitempty"`
+	Country  string    `json:"country,omitempty"`
+	Prefix   string    `json:"prefix,omitempty"`
+	Registry string    `json:"registry,omitempty"`
+	Private  bool      `json:"private,omitempty"`
+	Hidden   bool      `json:"hidden,omitempty"`
+	Sent     int       `json:"sent"`
+	Recv     int       `json:"recv"`
+	Loss     float64   `json:"loss_pct"`
+	Last     float64   `json:"last_ms"`
+	Avg      float64   `json:"avg_ms"`
+	Best     float64   `json:"best_ms"`
+	Worst    float64   `json:"worst_ms"`
+	StDev    float64   `json:"stdev_ms"`
+	Recent   []float64 `json:"recent_ms,omitempty"` // last rounds, oldest first; -1 = no answer
 }
 
 // Snapshot is a consistent copy of the current state.
 type Snapshot struct {
 	Target  string `json:"target"`
 	IP      string `json:"ip"`
+	Family  string `json:"family"` // "IPv4" or "IPv6"
 	Round   int    `json:"round"`
 	Reached bool   `json:"reached"`
 	Hops    []Hop  `json:"hops"`
 }
+
+// RecentLen is how many past results per hop are kept for the pulse view.
+const RecentLen = 60
 
 type hopStats struct {
 	addr                    string
 	sent, recv              int
 	last, best, worst, mean float64
 	m2                      float64 // Welford running variance
+	recent                  []float64
 }
 
 type Engine struct {
-	cfg    Config
-	prober probe.Prober
-	as     *asinfo.Resolver
-
 	mu      sync.Mutex
+	cfg     Config
+	prober  probe.Prober
+	gen     int // bumped when the target changes; results of older rounds are dropped
 	hops    []hopStats
 	destTTL int
 	round   int
+
+	as      *asinfo.Resolver
 	names   map[string]string
 	asinfo  map[string]asinfo.Info
 	asked   map[string]bool
@@ -82,11 +93,18 @@ type Engine struct {
 }
 
 func New(cfg Config, p probe.Prober) *Engine {
-	e := &Engine{cfg: cfg, prober: p, as: asinfo.NewResolver()}
+	if cfg.FirstTTL < 1 {
+		cfg.FirstTTL = 1
+	}
+	e := &Engine{
+		cfg:    cfg,
+		prober: p,
+		as:     asinfo.NewResolver(),
+		names:  map[string]string{},
+		asinfo: map[string]asinfo.Info{},
+		asked:  map[string]bool{},
+	}
 	e.reset()
-	e.names = map[string]string{}
-	e.asinfo = map[string]asinfo.Info{}
-	e.asked = map[string]bool{}
 	return e
 }
 
@@ -103,6 +121,33 @@ func (e *Engine) Reset() {
 	e.mu.Unlock()
 }
 
+// Replace switches to a new target address (e.g. IPv4 <-> IPv6) and starts over.
+func (e *Engine) Replace(ip net.IP, p probe.Prober) {
+	e.mu.Lock()
+	old := e.prober
+	e.prober = p
+	e.cfg.IP = ip
+	e.gen++
+	e.reset()
+	timeout := e.cfg.Timeout
+	e.mu.Unlock()
+	// probes of the running round may still use the old prober
+	time.AfterFunc(timeout+time.Second, func() { old.Close() })
+}
+
+// Close releases the current prober.
+func (e *Engine) Close() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.prober.Close()
+}
+
+func (e *Engine) IP() net.IP {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.cfg.IP
+}
+
 func (e *Engine) SetPaused(v bool) { e.paused.Store(v) }
 func (e *Engine) Paused() bool     { return e.paused.Load() }
 
@@ -116,20 +161,25 @@ func (e *Engine) Run(ctx context.Context, update func(Snapshot)) {
 		}
 		start := time.Now()
 		e.mu.Lock()
-		limit := e.cfg.MaxTTL
-		if e.destTTL > 0 {
-			limit = e.destTTL
-		}
+		first, limit := e.cfg.FirstTTL, e.limit()
+		p, gen := e.prober, e.gen
 		e.mu.Unlock()
+		if limit < first {
+			limit = first
+		}
 
-		results := make([]probe.Result, limit)
+		results := make([]probe.Result, 0, limit-first+1)
+		var rmu sync.Mutex
 		var wg sync.WaitGroup
-		for ttl := 1; ttl <= limit; ttl++ {
+		for ttl := first; ttl <= limit; ttl++ {
 			seq := int(e.seq.Add(1) & 0xffff)
 			wg.Add(1)
 			go func(ttl, seq int) {
 				defer wg.Done()
-				results[ttl-1] = e.prober.Probe(ctx, ttl, seq, e.cfg.Timeout)
+				r := p.Probe(ctx, ttl, seq, e.cfg.Timeout)
+				rmu.Lock()
+				results = append(results, r)
+				rmu.Unlock()
 			}(ttl, seq)
 			sleep(ctx, 10*time.Millisecond) // spread probes a little; routers rate-limit ICMP
 		}
@@ -137,7 +187,7 @@ func (e *Engine) Run(ctx context.Context, update func(Snapshot)) {
 		if ctx.Err() != nil {
 			return
 		}
-		done := e.record(results)
+		done := e.record(results, gen)
 		if update != nil {
 			update(e.Snapshot())
 		}
@@ -146,6 +196,26 @@ func (e *Engine) Run(ctx context.Context, update func(Snapshot)) {
 		}
 		sleep(ctx, time.Until(start.Add(e.cfg.Interval)))
 	}
+}
+
+// limit is the highest TTL worth probing in the next round. Caller holds mu.
+func (e *Engine) limit() int {
+	if e.destTTL > 0 {
+		return e.destTTL
+	}
+	limit := e.cfg.MaxTTL
+	if e.cfg.GiveUp > 0 && e.round > 0 {
+		last := e.cfg.FirstTTL - 1
+		for i := range e.hops {
+			if e.hops[i].recv > 0 {
+				last = i + 1
+			}
+		}
+		if l := last + e.cfg.GiveUp; l < limit {
+			limit = l
+		}
+	}
+	return limit
 }
 
 func sleep(ctx context.Context, d time.Duration) {
@@ -160,9 +230,12 @@ func sleep(ctx context.Context, d time.Duration) {
 	}
 }
 
-func (e *Engine) record(results []probe.Result) bool {
+func (e *Engine) record(results []probe.Result, gen int) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if gen != e.gen {
+		return false
+	}
 	e.round++
 	for _, r := range results {
 		if r.TTL < 1 || r.TTL > len(e.hops) {
@@ -171,9 +244,11 @@ func (e *Engine) record(results []probe.Result) bool {
 		h := &e.hops[r.TTL-1]
 		h.sent++
 		if r.Addr == nil {
+			h.push(-1)
 			continue
 		}
 		ms := float64(r.RTT.Microseconds()) / 1000
+		h.push(ms)
 		h.recv++
 		h.last = ms
 		if h.recv == 1 || ms < h.best {
@@ -197,6 +272,13 @@ func (e *Engine) record(results []probe.Result) bool {
 		}
 	}
 	return e.cfg.Count > 0 && e.round >= e.cfg.Count
+}
+
+func (h *hopStats) push(v float64) {
+	h.recent = append(h.recent, v)
+	if len(h.recent) > RecentLen {
+		h.recent = h.recent[len(h.recent)-RecentLen:]
+	}
 }
 
 func (e *Engine) lookup(ip net.IP) {
@@ -242,7 +324,10 @@ func (e *Engine) WaitLookups(d time.Duration) {
 func (e *Engine) Snapshot() Snapshot {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	s := Snapshot{Target: e.cfg.Target, IP: e.cfg.IP.String(), Round: e.round, Reached: e.destTTL > 0}
+	s := Snapshot{Target: e.cfg.Target, IP: e.cfg.IP.String(), Family: "IPv4", Round: e.round, Reached: e.destTTL > 0}
+	if e.cfg.IP.To4() == nil {
+		s.Family = "IPv6"
+	}
 
 	n := e.destTTL
 	if n == 0 {
@@ -257,7 +342,7 @@ func (e *Engine) Snapshot() Snapshot {
 			n++
 		}
 	}
-	for i := 0; i < n; i++ {
+	for i := e.cfg.FirstTTL - 1; i < n; i++ {
 		h := e.hops[i]
 		row := Hop{TTL: i + 1, Addr: h.addr, Sent: h.sent, Recv: h.recv}
 		if h.sent > 0 {
@@ -268,7 +353,11 @@ func (e *Engine) Snapshot() Snapshot {
 			row.Avg = round2(h.mean)
 			row.StDev = round2(math.Sqrt(h.m2 / float64(h.recv)))
 		}
-		if h.addr != "" {
+		row.Recent = append([]float64(nil), h.recent...)
+		switch {
+		case i < e.cfg.Hide:
+			row.Addr, row.Hidden = "", true
+		case h.addr != "":
 			row.Host = e.names[h.addr]
 			if a, ok := e.asinfo[h.addr]; ok {
 				row.ASN, row.ASName, row.Country = a.ASN, a.Name, a.Country

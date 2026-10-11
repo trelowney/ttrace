@@ -25,5 +25,30 @@ type Prober interface {
 	Close() error
 }
 
-// payload carried in every echo request (padding to a common ping size).
-var payload = []byte("ttrace-probe-ttrace-probe-ttrace-probe-ttrace-pr")
+// Options shared by all platforms.
+type Options struct {
+	Size   int    // whole packet size in bytes incl. IP and ICMP headers (0 = 64)
+	TOS    int    // IPv4 TOS / IPv6 traffic class byte
+	Source net.IP // send from this local address (nil = automatic)
+}
+
+// makePayload fills the echo data so that the whole packet has opts.Size bytes.
+func makePayload(size int, v6 bool) []byte {
+	if size == 0 {
+		size = 64
+	}
+	hdr := 28 // IPv4 + ICMP header
+	if v6 {
+		hdr = 48
+	}
+	n := size - hdr
+	if n < 8 {
+		n = 8
+	}
+	const pattern = "ttrace."
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = pattern[i%len(pattern)]
+	}
+	return b
+}
