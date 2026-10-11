@@ -16,6 +16,9 @@
     <WindowsPackageType>None</WindowsPackageType>
     <!-- needed to build the .pri file with the compiled XAML, also without MSIX -->
     <EnableMsixTooling>true</EnableMsixTooling>
+    <!-- Windows looks for <exe name>.pri or resources.pri; the second one is
+         found even when the downloaded file is renamed -->
+    <ProjectPriFileName>resources.pri</ProjectPriFileName>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <SelfContained>true</SelfContained>
     <Version>0.0.0</Version>
