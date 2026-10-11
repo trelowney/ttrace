@@ -96,7 +96,8 @@ jobs:
             -p:Platform=${{ matrix.platform }} $NV -o out
           cp ttrace.exe out/
           du -sh out
-          du -a out | sort -rn | head -25
+          find out -maxdepth 1 -name '*.pri' -o -maxdepth 1 -name '*.xbf' -o -maxdepth 1 -name '*.xaml' | sort
+          find out -type d | sort
 
       # Starts the window, traces a host and checks that results arrived.
       - name: Self-test

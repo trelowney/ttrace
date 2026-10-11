@@ -13,6 +13,8 @@ public partial class App : Application
         InitializeComponent();
         UnhandledException += (_, e) => Crash.Write(e.Exception);
         // XAML errors say only "XAML parsing failed"; these say what exactly
+        DebugSettings.IsXamlResourceReferenceTracingEnabled = true;
+        DebugSettings.IsBindingTracingEnabled = true;
         DebugSettings.XamlResourceReferenceFailed += (_, e) => Crash.Write(new Exception("XAML resource: " + e.Message));
         DebugSettings.BindingFailed += (_, e) => Crash.Write(new Exception("XAML binding: " + e.Message));
     }
