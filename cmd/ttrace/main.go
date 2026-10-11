@@ -281,6 +281,7 @@ func run(o options) {
 	case *jsonStream:
 		var mu sync.Mutex
 		runAll(ctx, tabs, func(s trace.Snapshot) {
+			s.Geo = geoNote(gdb)
 			mu.Lock()
 			report.JSON(os.Stdout, s, false)
 			mu.Unlock()
@@ -324,6 +325,20 @@ func run(o options) {
 			fail(err.Error())
 		}
 	}
+}
+
+// geoNote describes a running or failed download of the location data.
+func geoNote(d *geo.DB) string {
+	st := d.Status()
+	switch {
+	case st.Running && st.Total > 0:
+		return fmt.Sprintf("Downloading the location data for the map: %d of %d MB", st.Done>>20, st.Total>>20)
+	case st.Running:
+		return fmt.Sprintf("Downloading the location data for the map: %d MB", st.Done>>20)
+	case st.Err != "":
+		return "The location data for the map could not be downloaded: " + st.Err
+	}
+	return ""
 }
 
 // updateGeo downloads the location database with a progress line.

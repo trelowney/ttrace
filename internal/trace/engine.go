@@ -82,6 +82,7 @@ type Snapshot struct {
 	Reached bool   `json:"reached"`
 	Hops    []Hop  `json:"hops"`
 	Links   []Link `json:"links,omitempty"`
+	Geo     string `json:"geo,omitempty"` // state of the location data download, for showing next to the map
 }
 
 // Link says that within one round the router From answered at hop FromTTL

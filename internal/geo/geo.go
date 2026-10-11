@@ -236,6 +236,14 @@ func (d *DB) Download(ctx context.Context, progress func(done, total int64)) err
 	if err := os.MkdirAll(filepath.Dir(d.path), 0o755); err != nil {
 		return fmt.Errorf("cannot create the folder for the location database: %v", err)
 	}
+	// A download that was killed half way (e.g. the GUI closed) leaves its
+	// temporary file behind; one untouched for an hour is not in use.
+	old, _ := filepath.Glob(filepath.Join(filepath.Dir(d.path), "download-*.tmp"))
+	for _, f := range old {
+		if fi, err := os.Stat(f); err == nil && time.Since(fi.ModTime()) > time.Hour {
+			os.Remove(f)
+		}
+	}
 	// A new file appears on the 1st of each month; early on that day it may
 	// not be there yet, so fall back to the previous month.
 	now := time.Now().UTC()
