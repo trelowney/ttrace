@@ -45,8 +45,8 @@ Examples:
   ttrace example.com example.net          two targets at once, Tab switches between them
   ttrace -r --format dot example.com > route.dot && dot -Tsvg route.dot -o route.svg
                                           draw the route as a picture with Graphviz
-  ttrace --geo-update                     download the location database for the map
-                                          (%s, once; key m in the live view shows the map)
+  ttrace example.com, then press m        the route on a world map; the location data
+                                          (%s) is downloaded automatically on the first run
 
 Settings file: options can also be written into %s,
 one per line with the same names as below, e.g. "interval = 2s" or "no-as".
@@ -107,7 +107,7 @@ func loadConfig(def string) {
 type options struct {
 	count, firstTTL, maxTTL, giveUp, hide, size, tos, port *int
 	reportMode, jsonMode, wide, jsonStream, only4, only6   *bool
-	noDNS, noAS, showVer, geoUpdate                        *bool
+	noDNS, noAS, showVer, geoUpdate, noGeo                 *bool
 	format, source, probeType                              *string
 	interval, timeout                                      *time.Duration
 }
@@ -136,7 +136,8 @@ func defineFlags() options {
 		noDNS:      flag.Bool("n", false, "do not look up host names, show IP addresses (key n in the live view switches name / IP / both)"),
 		noAS:       flag.Bool("no-as", false, "do not look up AS number, AS name and country"),
 		showVer:    flag.Bool("v", false, "print version and exit"),
-		geoUpdate:  flag.Bool("geo-update", false, "download or refresh the location database for the map ("+geo.Size+", from db-ip.com) and exit"),
+		geoUpdate:  flag.Bool("geo-update", false, "download the newest location data for the map now and exit (normally this happens automatically)"),
+		noGeo:      flag.Bool("no-geo", false, "do not download the location data for the map ("+geo.Size+"); a copy downloaded before is still used"),
 	}
 }
 
@@ -155,7 +156,7 @@ func run(o options) {
 		updateGeo(gdb)
 		return
 	}
-	if gerr != nil {
+	if gerr != nil && *o.noGeo {
 		fmt.Fprintln(os.Stderr, "ttrace:", gerr) // the trace still works, only without places
 	}
 	if flag.NArg() < 1 {
@@ -218,6 +219,11 @@ func run(o options) {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	if !*o.noGeo && gdb.Stale() {
+		// Missing or older than a month: fetch it while the trace runs. The
+		// live view shows the progress in the map (key m).
+		gdb.Start(ctx, nil)
+	}
 
 	batch := *reportMode
 	if batch && *count == 0 {
@@ -281,6 +287,10 @@ func run(o options) {
 		})
 	case batch:
 		runAll(ctx, tabs, nil)
+		if gdb.Status().Running {
+			fmt.Fprintf(os.Stderr, "ttrace: finishing the download of the location data (%s, first run only)…\n", geo.Size)
+			gdb.Wait()
+		}
 		var snaps []trace.Snapshot
 		for _, t := range tabs {
 			t.Eng.WaitLookups(5 * time.Second)

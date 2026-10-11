@@ -50,15 +50,12 @@ dot -Tsvg route.dot -o route.svg
 ### Route on a map
 
 Press **m** in the live view to see the route drawn on a world map in the
-terminal. The first time, ttrace asks to download a database of IP locations
-(about 60 MB, once; press **g**). It can also be fetched or refreshed from the
-command line:
+terminal. Nothing needs to be installed or set up: on the first run ttrace
+downloads the database of IP locations by itself (about 60 MB, in the
+background while the trace runs) and refreshes it once a month. Use
+`--no-geo` to stop that, e.g. on a metered connection.
 
-```
-ttrace --geo-update
-```
-
-Once downloaded, JSON and CSV output also contain the approximate place
+JSON and CSV output also contain the approximate place
 (city, country, latitude, longitude) of every router.
 
 Router places are **approximate** — often only the city or even the country of

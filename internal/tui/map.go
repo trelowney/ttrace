@@ -1,11 +1,8 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"strconv"
-	"sync"
-	"time"
 
 	"github.com/gdamore/tcell/v2"
 
@@ -14,44 +11,12 @@ import (
 	"github.com/trelowney/ttrace/internal/trace"
 )
 
-// download is the state of fetching the location database in the background.
-type download struct {
-	mu          sync.Mutex
-	running     bool
-	done, total int64
-	err         string
-}
-
 var (
 	stCoast  = stDefault.Foreground(tcell.ColorGray)
 	stRoute  = stDefault.Foreground(tcell.ColorYellow)
 	stLabel  = stDefault.Foreground(tcell.ColorGreen).Bold(true)
 	stTarget = stDefault.Foreground(tcell.ColorAqua).Bold(true)
 )
-
-func (v *view) startDownload(ctx context.Context) {
-	d := &v.dl
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.running || v.opt.Geo == nil {
-		return
-	}
-	d.running, d.done, d.total, d.err = true, 0, 0, ""
-	go func() {
-		err := v.opt.Geo.Download(ctx, func(done, total int64) {
-			d.mu.Lock()
-			d.done, d.total = done, total
-			d.mu.Unlock()
-		})
-		d.mu.Lock()
-		d.running = false
-		if err != nil && ctx.Err() == nil {
-			d.err = err.Error()
-		}
-		d.mu.Unlock()
-		v.scr.PostEvent(tcell.NewEventInterrupt(nil))
-	}()
-}
 
 // group is a run of consecutive hops at the same place.
 type group struct {
@@ -62,9 +27,11 @@ type group struct {
 
 func (v *view) drawMap(s trace.Snapshot, top, w, hgt int) {
 	db := v.opt.Geo
-	v.dl.mu.Lock()
-	running, done, total, dlErr := v.dl.running, v.dl.done, v.dl.total, v.dl.err
-	v.dl.mu.Unlock()
+	var st geo.Status
+	if db != nil {
+		st = db.Status()
+	}
+	running, done, total, dlErr := st.Running, st.Done, st.Total, st.Err
 
 	y := top + 1
 	line := func(text string, st tcell.Style) {
@@ -85,21 +52,16 @@ func (v *view) drawMap(s trace.Snapshot, top, w, hgt int) {
 		switch {
 		case running:
 			progress()
+			line("This happens once; the map appears by itself when it is done.", stDim)
 			line("The trace keeps running meanwhile. Press m to go back to the table.", stDim)
 		case dlErr != "":
 			line("The download did not work:", stBad)
 			line(dlErr, stDefault)
 			y++
 			line("Press g to try again, or m to go back to the table.", stMsg)
-		default:
-			line("The map needs a list of where IP addresses are located ("+geo.Size+").", stDefault)
-			line("It is downloaded once from db-ip.com and saved on this computer.", stDefault)
-			y++
-			line("Press g to download it now, or m to go back to the table.", stMsg)
-			if db != nil {
-				y++
-				line("It will be saved to "+db.Path(), stDim)
-			}
+		default: // only with --no-geo
+			line("The map is turned off (--no-geo), so ttrace does not download the location data.", stDefault)
+			line("Press g to download it now ("+geo.Size+", once), or m to go back to the table.", stMsg)
 		}
 		return
 	}
@@ -120,9 +82,6 @@ func (v *view) drawMap(s trace.Snapshot, top, w, hgt int) {
 	}
 
 	foot := []string{"Router places are approximate — often just the city or country of the network owner."}
-	if age := db.Age(); age > 45*24*time.Hour {
-		foot = append(foot, fmt.Sprintf("The location data is %d days old — press g to update it.", int(age.Hours()/24)))
-	}
 	foot = append(foot, geo.Attribution)
 	if running {
 		foot = append(foot, "") // room for the progress line

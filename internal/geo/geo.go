@@ -74,7 +74,65 @@ type DB struct {
 	mu   sync.RWMutex
 	r    *maxminddb.Reader
 	path string
+
+	smu sync.Mutex // guards st
+	st  Status
+	wg  sync.WaitGroup
 }
+
+// Status of the background download started by Start.
+type Status struct {
+	Running     bool
+	Done, Total int64  // bytes
+	Err         string // why the last download failed, "" if it did not
+}
+
+// MaxAge is when a database counts as old and Start fetches a newer one
+// (DB-IP publishes a new one every month).
+const MaxAge = 35 * 24 * time.Hour
+
+// Stale reports whether the database is missing or old.
+func (d *DB) Stale() bool { return !d.Ready() || d.Age() > MaxAge }
+
+// Start downloads the database in the background unless a download is
+// already running. Lookups keep using the old database until the new one
+// is complete. done (may be nil) is called when it finishes.
+func (d *DB) Start(ctx context.Context, done func()) {
+	d.smu.Lock()
+	defer d.smu.Unlock()
+	if d.st.Running {
+		return
+	}
+	d.st = Status{Running: true}
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		err := d.Download(ctx, func(n, total int64) {
+			d.smu.Lock()
+			d.st.Done, d.st.Total = n, total
+			d.smu.Unlock()
+		})
+		d.smu.Lock()
+		d.st.Running = false
+		if err != nil && ctx.Err() == nil {
+			d.st.Err = err.Error()
+		}
+		d.smu.Unlock()
+		if done != nil {
+			done()
+		}
+	}()
+}
+
+// Status tells how the background download is doing.
+func (d *DB) Status() Status {
+	d.smu.Lock()
+	defer d.smu.Unlock()
+	return d.st
+}
+
+// Wait blocks until a background download has finished.
+func (d *DB) Wait() { d.wg.Wait() }
 
 // DefaultPath is where the database is kept, e.g. ~/.cache/ttrace/dbip-city-lite.mmdb.
 func DefaultPath() string {

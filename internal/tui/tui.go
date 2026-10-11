@@ -40,7 +40,6 @@ type view struct {
 	opt    Options
 	pulse  bool // show recent latency bars instead of statistics
 	world  bool // show the map instead of the table
-	dl     download
 	msg    string
 	msgEnd time.Time
 }
@@ -104,8 +103,8 @@ func Run(ctx context.Context, tabs []Tab, opt Options) error {
 				v.pulse, v.world = !v.pulse, false
 			case ev.Rune() == 'm':
 				v.world = !v.world
-			case ev.Rune() == 'g' && v.world:
-				v.startDownload(ctx)
+			case ev.Rune() == 'g' && v.world && v.opt.Geo != nil:
+				v.opt.Geo.Start(ctx, func() { scr.PostEvent(tcell.NewEventInterrupt(nil)) })
 			case ev.Rune() == '4', ev.Rune() == '6':
 				v.switchFamily(ev.Rune() == '6')
 			}
