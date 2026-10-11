@@ -61,6 +61,17 @@ JSON and CSV output also contain the approximate place
 Router places are **approximate** — often only the city or even the country of
 the network owner, not where the router really stands.
 
+### Windows window
+
+For Windows there is also a window version: download
+`ttrace-gui-windows-x64.zip` (or `-arm64.zip`) from the releases, unpack the
+whole zip into one folder and start `ttrace-gui.exe`. Nothing has to be
+installed; ttrace.exe and everything else it needs are inside. Type the host,
+press Start, and you get the same table plus the route on a world map.
+
+So far the window has only been checked by an automatic test on a build
+machine, not by a person.
+
 ### Settings file
 
 Options you always use can go into a settings file, one per line, with the
