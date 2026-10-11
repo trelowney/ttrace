@@ -66,6 +66,7 @@ jobs:
     needs: build
     runs-on: windows-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
           - { arch: x64, goarch: amd64, platform: x64 }
@@ -95,6 +96,7 @@ jobs:
             -p:Platform=${{ matrix.platform }} $NV -o out
           cp ttrace.exe out/
           du -sh out
+          du -a out | sort -rn | head -25
 
       # Starts the window, traces a host and checks that results arrived.
       - name: Self-test
