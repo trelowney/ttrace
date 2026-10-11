@@ -108,7 +108,15 @@ jobs:
           if (-not $p.WaitForExit(150000)) { $p.Kill(); Write-Error 'the window did not finish in time' }
           $crash = Join-Path $env:LOCALAPPDATA 'ttrace\gui-crash.txt'
           if (Test-Path $crash) { Get-Content $crash }
-          if (-not (Test-Path $res)) { Write-Error 'no result was written'; exit 1 }
+          if (-not (Test-Path $res)) {
+            # find out why: does the original name work, and where are the .pri files?
+            $res2 = Join-Path $env:RUNNER_TEMP 'selftest2.txt'
+            $q = Start-Process -FilePath out\ttrace-gui.exe -ArgumentList '--selftest', $res2, '1.1.1.1' -PassThru
+            if (-not $q.WaitForExit(150000)) { $q.Kill() }
+            if (Test-Path $res2) { Write-Output ("original name: " + (Get-Content $res2)) } else { Write-Output 'original name: no result' }
+            Get-ChildItem -Recurse -Filter *.pri (Join-Path $env:TEMP '.net') | ForEach-Object { $_.FullName }
+            Write-Error 'no result was written'; exit 1
+          }
           $line = Get-Content $res
           Write-Output $line
           if (-not $line.StartsWith('ok ')) { exit 1 }
