@@ -23,7 +23,7 @@ jobs:
         run: go mod tidy && git diff --stat
 
       - name: Formatting (only reported)
-        run: gofmt -l . || true
+        run: gofmt -d . || true
 
       - name: Vet (linux, macOS, windows)
         run: |
