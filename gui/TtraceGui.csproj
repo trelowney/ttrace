@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Windows window for ttrace. It starts the bundled ttrace.exe with
-       --json-stream and shows the result; all measuring is done there. -->
+  <!-- Windows window for ttrace. It starts the bundled ttrace.exe in
+       JSON stream mode and shows the result; all measuring is done there. -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
