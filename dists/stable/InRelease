@@ -1,0 +1,47 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Architectures: amd64 arm64
+Codename: stable
+Components: main
+Date: Fri, 13 Nov 2026 23:42:33 +0000
+Description: ttrace packages
+Label: ttrace
+Origin: ttrace
+Suite: stable
+MD5Sum:
+ b1c8d344cbb5de01a094c745b13f6ece              950 main/binary-amd64/Packages
+ 77e70daa1b7290719bb4ca89fe6c713f              622 main/binary-amd64/Packages.gz
+ 319b08ede5dd7260a2540783ca334f43              950 main/binary-arm64/Packages
+ 46b046397765e3791f2a2eae483e2a5b              621 main/binary-arm64/Packages.gz
+SHA1:
+ 83de365d4dfc4695e2e9281018b9ea2fd86105fe              950 main/binary-amd64/Packages
+ f4552c25f8a249a0be7c6d8ed9a8edb3fd2eaf03              622 main/binary-amd64/Packages.gz
+ f6ea11a5e89f5672963354bfa308e4f5fa56b46d              950 main/binary-arm64/Packages
+ b0698accd76943d6fbfbb7ca52ab90d4c0a72531              621 main/binary-arm64/Packages.gz
+SHA256:
+ b79efa5b2ab40071b914844e945417aeb86ae5595adcca041d58b844a3f48b56              950 main/binary-amd64/Packages
+ 6a8ba553ce1f33c49d7f277eb82143c490e2181fbddd076317d9f630f7866ab4              622 main/binary-amd64/Packages.gz
+ e8cd295cfd5606190cac417f255043b8fa191a343b7c0f5e8bea5978fc9184bd              950 main/binary-arm64/Packages
+ 83a13c04aa0b7a23ba39d52b36df158c3241c7636e1f3bb15ace5e6749642fff              621 main/binary-arm64/Packages.gz
+SHA512:
+ 9bea300e669db129af11e1e07092f09f8ba8e4566ece850984b657c8b4bbc953be56add9a4d62f778b238b12e6e4c9479bd212b7d8fd5cbce0e6a3e8dd9de18b              950 main/binary-amd64/Packages
+ 55238af2ad210d9627bfc27dddff1e59f43205eb8c21e4773d522956763d0e7bef59631c6a53e6bd23d832539f309b5f98826a1a9fb3a45d7a9f738efc1ec115              622 main/binary-amd64/Packages.gz
+ ff4e6fb4e38780bdd51a5d20a11dbef53b0044d830b87ff9ca50c337ffb66b374ba5e1b951a3df0f55dfd37b5e0f959ba86b6fae231f359554cd10508b90f9e6              950 main/binary-arm64/Packages
+ 376eea5f50f65f8652ce44a743c57525717cad1568aacccceadf6770bbb2bf50184bff0e93796088357408dadf5a396da094348d0e58f72d237e5edaa0e2b4ef              621 main/binary-arm64/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEEXX3L04BgSqNn5lq1uX1AWLjeL+AFAmr3oGkACgkQuX1AWLje
+L+DCRBAAkSZC0qd6ud+gTeYxhii/jq7px3RWkzB+ZHnD+jwUM5CbMh9N1ozz/ICU
+/sPlO8wb3Sba9Y+v83y3MP9e1ET2g6nGwJVD33gB58UgGz3M8Pup2L2hrwk1cWBO
+C3Ld6bKmOnQgLoSJ0rmBvcYgx2vFF7LnLyv6jVGFlddo6LG8tiSgHoBLP2zOXq4w
+zAjwNjaWqPCgqcu6w+x1wK5MNDtXQHtJKGFi2cSjlI7pGuX9D8ZaWBYR8IzM+wFm
+rRrnawkatwbqJVAkX1oKr2NcdA8T4Ojh/n+37woecBi/fukHaso+zEMI6mesSCOg
+81sQbVmZcPLrT7WPm9ohGlwgl+WHVgemH7BjIof0WzxS2SHBJKtSLAMvuS4KNhyU
+2ItoDVdwlK4bRPJC2gV6lHLGZOF33sivbqcGGeL9olj3S6GZzAFoCqzpHQCJLAoU
+oLo1e3dnBKspqdB4Ed98vIV6PhqfUdKKC1nIOOC7a7Tf1pzmOHRkUygWcBIZMHGH
+Imkqm+s3yUaDhBEq6AP+X2q3tznQfbZaKmP3LqJxMwnYN8TKfR62utYa9CgbzyTe
+l+JzEV1kepLQiKRM8uvpCHYhUO+4zBs3lOuLQgWIQWK1uqS3wgm+lanPjnMDt4ew
+UStv8L8V68zch/PpIyhH0HE8O2K6egwJ9ciX9EtGbqmVK6+gZYc=
+=Fn0B
+-----END PGP SIGNATURE-----
