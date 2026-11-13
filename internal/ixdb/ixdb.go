@@ -188,6 +188,16 @@ func (d *DB) Running() bool {
 	return d.running
 }
 
+// Err is why the last background download failed, "" when it did not.
+func (d *DB) Err() string {
+	if d == nil {
+		return ""
+	}
+	d.smu.Lock()
+	defer d.smu.Unlock()
+	return d.err
+}
+
 // Wait blocks until a background download has finished.
 func (d *DB) Wait() {
 	if d != nil {
@@ -201,24 +211,52 @@ func (d *DB) Path() string { return d.path }
 var client = &http.Client{Timeout: 3 * time.Minute, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, ResponseHeaderTimeout: 60 * time.Second}}
 
 // get fetches one PeeringDB API list, e.g. "ix?fields=id,name,country".
+// When PeeringDB is busy or limits how often it may be asked (HTTP 429),
+// it waits as long as PeeringDB says (at most a minute) and tries again.
 func get(ctx context.Context, query string, into any) error {
+	for try := 1; ; try++ {
+		wait, err := getOnce(ctx, query, into)
+		if wait == 0 || try == 3 {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+}
+
+// getOnce makes one request; wait > 0 means it is worth trying again after that time.
+func getOnce(ctx context.Context, query string, into any) (time.Duration, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://www.peeringdb.com/api/"+query, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("User-Agent", "ttrace (https://github.com/trelowney/ttrace)")
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("cannot reach www.peeringdb.com: %v — check the internet connection and try again", err)
+		return 0, fmt.Errorf("cannot reach www.peeringdb.com: %v — check the internet connection and try again", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+		wait := 15 * time.Second
+		if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && s > 0 {
+			wait = time.Duration(s) * time.Second
+		}
+		err := fmt.Errorf("www.peeringdb.com answered %s — it will be tried again on the next run", resp.Status)
+		if wait > time.Minute {
+			return 0, err
+		}
+		return wait, err
+	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("www.peeringdb.com answered %s — try again later", resp.Status)
+		return 0, fmt.Errorf("www.peeringdb.com answered %s — it will be tried again on the next run", resp.Status)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(into); err != nil {
-		return fmt.Errorf("the list of internet exchanges did not download completely (%v) — try again", err)
+		return 0, fmt.Errorf("the list of internet exchanges did not download completely (%v) — it will be tried again on the next run", err)
 	}
-	return nil
+	return 0, nil
 }
 
 // Download fetches the newest data from PeeringDB, saves it and switches to it.

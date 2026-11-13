@@ -112,7 +112,7 @@ func TestMTUText(t *testing.T) {
 	r := MTUReport{Target: "example.com", IP: "192.0.2.10", Family: "IPv4", Start: 1500, Iface: "eth0", PathMTU: 1400, Reached: true,
 		Hops: []MTUHop{
 			{TTL: 1, Addr: "192.0.2.1", Host: "gw.example.net", Size: 1500},
-			{TTL: 2},
+			{TTL: 2, Addr: "203.0.113.7", IX: "Example-IX", ASN: "64501", ASName: "MEMBER - Member Ltd", Size: 1500},
 			{TTL: 3, Addr: "198.51.100.1", ASN: "64500", ASName: "EXAMPLENET - Example, Inc.", Size: 1492},
 			{TTL: 4, Addr: "192.0.2.10", Size: 1400},
 		},
@@ -124,7 +124,7 @@ func TestMTUText(t *testing.T) {
 	for _, want := range []string{
 		"starting with 1500 bytes (MTU of eth0)",
 		"gw.example.net",
-		"  2. ???",
+		"AS64501 Example-IX (MEMBER)",
 		"AS64500 EXAMPLENET",
 		"▼ smaller here: 1500 → 1492 bytes (the router said so)",
 		"▼ smaller here: 1492 → 1400 bytes — bigger packets vanish",
@@ -134,6 +134,12 @@ func TestMTUText(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
+	}
+	r.Hops[1] = MTUHop{TTL: 2}
+	b.Reset()
+	MTUText(&b, r, NameHost, true, false)
+	if !strings.Contains(b.String(), "  2. ???") {
+		t.Errorf("silent hop missing:\n%s", b.String())
 	}
 	if strings.Contains(out, "Example, Inc.") {
 		t.Errorf("AS name not shortened:\n%s", out)

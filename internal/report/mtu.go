@@ -16,6 +16,7 @@ type MTUHop struct {
 	Host   string `json:"host,omitempty"`
 	ASN    string `json:"asn,omitempty"`
 	ASName string `json:"as_name,omitempty"`
+	IX     string `json:"ix,omitempty"` // internet exchange; ASN is then the member using the address
 	Size   int    `json:"size,omitempty"`
 }
 
@@ -73,11 +74,11 @@ func MTUText(w io.Writer, r MTUReport, m NameMode, showAS, wide bool) {
 			name = Fit(name, nameW)
 		}
 		as := ""
-		if showAS && h.ASN != "" {
-			as = "AS" + h.ASN
-			if h.ASName != "" {
-				as += " " + ShortAS(h.ASName)
+		if showAS && (h.ASN != "" || h.IX != "") {
+			if h.ASN != "" {
+				as = "AS" + h.ASN + " "
 			}
+			as += ASLabel(h.ASName, h.IX, !wide)
 			if nameW > 0 {
 				as = Fit(as, 24)
 			}

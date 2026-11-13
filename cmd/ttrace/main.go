@@ -369,6 +369,9 @@ func run(o options) {
 			fmt.Fprintf(os.Stderr, "ttrace: finishing the download of the list of internet exchanges (%s, every two weeks)…\n", ixdb.Size)
 			ix.Wait()
 		}
+		if e := ix.Err(); e != "" {
+			fmt.Fprintln(os.Stderr, "ttrace: internet exchanges are not marked this time:", e)
+		}
 		var snaps []trace.Snapshot
 		for _, t := range tabs {
 			// Twice: the first snapshot can start new lookups (names of
@@ -488,6 +491,7 @@ func runMTU(maxTTL int, timeout time.Duration, src net.IP, only4, only6, asJSON 
 		}
 	}
 	asr := asinfo.NewResolver()
+	ix := ixdb.Open(ixdb.DefaultPath()) // only what was downloaded before; --mtu does not download
 	var reps []report.MTUReport
 	failed := false
 	for i, target := range flag.Args() {
@@ -532,10 +536,16 @@ func runMTU(maxTTL int, timeout time.Duration, src net.IP, only4, only6, asJSON 
 						x.Host = strings.TrimSuffix(n[0], ".")
 					}
 				}
-				if showAS {
-					if info, err := asr.Lookup(lctx, addr); err == nil {
-						x.ASN, x.ASName = info.ASN, info.Name
+				if !showAS {
+					return
+				}
+				if hit, ok := ix.Lookup(addr); ok {
+					x.IX, x.ASN = hit.IX, hit.ASN
+					if hit.ASN != "" {
+						x.ASName = asr.Name(lctx, hit.ASN)
 					}
+				} else if info, err := asr.Lookup(lctx, addr); err == nil {
+					x.ASN, x.ASName = info.ASN, info.Name
 				}
 			}(&rep.Hops[j], h.Addr)
 		}
