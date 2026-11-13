@@ -35,6 +35,7 @@ const usage = `ttrace %s — trace the route to a host, with AS number, AS name 
 
 Usage:
   ttrace [options] <host or IP> [more hosts…]
+  (options can also come after the host: ttrace example.com -6)
 
 Examples:
   ttrace example.com                      live view (q quit, d pulse, 4/6 switch IPv4/IPv6)
@@ -70,8 +71,43 @@ func main() {
 	flag.String("config", defaultConfig, "settings file to read")
 	opts := defineFlags()
 	loadConfig(defaultConfig)
-	flag.Parse()
+	flag.CommandLine.Parse(optionsFirst(flag.CommandLine, os.Args[1:]))
 	run(opts)
+}
+
+// optionsFirst moves options written after the host to the front, so that
+// "ttrace example.com -6" works like "ttrace -6 example.com" (the way
+// tracert and others allow it). Everything after "--" stays as it is.
+func optionsFirst(fs *flag.FlagSet, args []string) []string {
+	var opts, rest []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			rest = append(rest, args[i:]...)
+			break
+		}
+		if len(a) < 2 || a[0] != '-' {
+			rest = append(rest, a)
+			continue
+		}
+		opts = append(opts, a)
+		name, _, hasVal := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		f := fs.Lookup(name)
+		if f == nil || hasVal {
+			continue
+		}
+		if b, ok := f.Value.(interface{ IsBoolFlag() bool }); ok && b.IsBoolFlag() {
+			continue
+		}
+		if i+1 < len(args) { // the value of the option, e.g. -c 10
+			i++
+			opts = append(opts, args[i])
+		}
+	}
+	if len(rest) > 0 && rest[0] != "--" {
+		rest = append([]string{"--"}, rest...) // a host can never be read as an option
+	}
+	return append(opts, rest...)
 }
 
 // loadConfig applies the settings file before the command line is parsed,
