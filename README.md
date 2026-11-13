@@ -4,10 +4,6 @@ Trace the route to a host and see, for every hop, **who runs it**: AS number,
 AS name and the country where the address block is registered — next to the
 usual loss and latency statistics.
 
-> **Work in progress.** ttrace is under active development and largely untested.
-> So far it has only been tried on Linux (IPv4 and IPv6); the macOS and Windows
-> builds have not been tested yet. Expect bugs and changing options.
-
 ```
 $ ttrace -r -c 3 1.1.1.1
   #  Host                           ASN       AS name              CC   Loss%  Snt   Last    Avg   Best   Wrst  StDev
@@ -21,6 +17,48 @@ $ ttrace -r -c 3 1.1.1.1
 
 Builds for Linux, macOS and Windows. IPv4 and IPv6.
 
+On top of that ttrace
+
+* names **internet exchanges** (IX) a hop is on, with the network that uses
+  the address there — `Frys-IX (CLOUDFLARENET)` instead of the exchange's own AS,
+* prints the **AS path**, the networks the route goes through,
+* marks where the **latency jumps** and stays higher (`▲ +27.0 ms`), e.g. an
+  ocean crossing or a congested link,
+* notices when a network **rewrites DSCP** (QoS marking) of your packets,
+* finds the **path MTU** and where it gets smaller, including black holes
+  (`--mtu`),
+* **compares** two saved measurements (`--compare`),
+* draws the route **on a world map** in the terminal.
+
+## Install
+
+**Debian, Ubuntu** and relatives (amd64, arm64):
+
+```
+sudo mkdir -p /etc/apt/keyrings
+sudo curl -fsSL -o /etc/apt/keyrings/ttrace.asc https://trelowney.github.io/ttrace/ttrace.asc
+echo "deb [signed-by=/etc/apt/keyrings/ttrace.asc] https://trelowney.github.io/ttrace stable main" | sudo tee /etc/apt/sources.list.d/ttrace.list
+sudo apt update && sudo apt install ttrace
+```
+
+The package lets ttrace run without sudo; updates come with `apt upgrade`.
+
+**macOS** (and Linux) with [Homebrew](https://brew.sh):
+
+```
+brew install trelowney/tap/ttrace
+```
+
+**Windows:**
+
+```
+winget install trelowney.ttrace
+```
+
+Or download the file for your system from the
+[releases](https://github.com/trelowney/ttrace/releases) — it is a single
+program, nothing else is needed.
+
 ## Usage
 
 ```
@@ -28,9 +66,63 @@ ttrace example.com              live view (q quit, p pause, r reset, n names, a 
 ttrace -r -c 10 example.com     run 10 rounds and print a report
 ttrace -j -c 5 example.com      the same as JSON
 ttrace --json-stream host       one JSON line after every round
+ttrace example.com -6           options can also come after the host
 ```
 
 Run `ttrace -h` for all options.
+
+### Internet exchanges and AS path
+
+At an internet exchange many networks share one address block, which belongs
+to the exchange. ttrace looks the address up in the free
+[PeeringDB](https://www.peeringdb.com) data and shows the exchange together
+with the network that really uses the address. The list (about 10 MB) is
+downloaded by itself on the first run and refreshed every two weeks.
+
+Under the table is the AS path, e.g.
+
+```
+AS path: AS209874 TECHTIDE → AS49581 TUBE-HOSTING → Frys-IX → AS13335 CLOUDFLARENET
+```
+
+Long AS names are cut to the short name (`CLOUDFLARENET`); `--wide` and JSON
+keep the full one. Key **a** in the live view hides the AS columns and the path.
+
+### Latency jumps and DSCP
+
+A hop where the latency rises by at least 10 ms (and 25 %) and **stays** higher
+on all the hops behind it gets `▲ +X ms`. A router that only answers slowly
+itself is not marked, because the hops behind it are fast again.
+
+Send probes with a QoS marking, e.g. `--tos 184` (DSCP EF), and ttrace shows
+where on the way a network changed it:
+`[DSCP changed on the way here: 46 (EF) → 0 (CS0)]`.
+
+### Path MTU
+
+```
+$ ttrace --mtu example.com
+  …
+  7. tunnel-gw.example.net                AS64500 EXAMPLE-NET              1480
+     ▼ smaller here: 1500 → 1480 bytes (the router said so)
+Path MTU: 1480 bytes — the biggest packet that gets all the way to example.com in one piece.
+```
+
+Where big packets vanish without the router saying so (a PMTU black hole —
+big downloads hang while small ones work), ttrace finds the size by trying and
+says so. Linux only for now; `-j` gives JSON.
+
+### Comparing two measurements
+
+```
+ttrace -j -c 20 example.com > before.json
+… change something, or wait for the problem …
+ttrace -j -c 20 example.com > after.json
+ttrace --compare before.json after.json
+```
+
+shows both side by side, hop by hop, and lists where the route, loss or
+latency changed.
 
 ### Several targets
 
@@ -53,7 +145,8 @@ Press **m** in the live view to see the route drawn on a world map in the
 terminal. Nothing needs to be installed or set up: on the first run ttrace
 downloads the database of IP locations by itself (about 60 MB, in the
 background while the trace runs) and refreshes it once a month. Use
-`--no-geo` to stop that, e.g. on a metered connection.
+`--no-geo` to stop that (and the internet exchange list), e.g. on a metered
+connection.
 
 JSON and CSV output also contain the approximate place
 (city, country, latitude, longitude) of every router.
@@ -107,7 +200,7 @@ their hop, in every probe type.
 ### Permissions
 
 * **Linux:** sending raw ICMP needs root. Either use `sudo`, or allow it once:
-  `sudo setcap cap_net_raw+ep $(which ttrace)`. Packages do this for you.
+  `sudo setcap cap_net_raw+ep $(which ttrace)`. The APT package does this for you.
 * **macOS:** use `sudo`.
 * **Windows:** works as a normal user.
 
@@ -123,6 +216,9 @@ Places on the map come from the free
 (IP Geolocation by [DB-IP](https://db-ip.com), CC BY 4.0), which ttrace
 downloads into your cache folder when you ask for it. The land outline is
 [Natural Earth](https://www.naturalearthdata.com) 1:50m land (public domain).
+
+Internet exchanges and their members come from [PeeringDB](https://www.peeringdb.com)
+(free API, no account needed).
 
 ## License
 

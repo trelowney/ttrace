@@ -50,13 +50,31 @@ jobs:
           done
           ls -l dist
 
-      # Test builds from the dev branch, kept for a day to try them out.
-      - name: Dev artifact
-        if: github.ref == 'refs/heads/dev'
-        uses: actions/upload-artifact@v4
+      - name: Debian packages
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/v*) V="${GITHUB_REF_NAME#v}" ;;
+            *) V="0.0~dev+${GITHUB_SHA::7}" ;;
+          esac
+          for a in amd64 arm64; do packaging/deb.sh "$V" $a dist/ttrace-linux-$a dist; done
+          ls -l dist/*.deb
+
+      # Installs the package like a user would and runs ttrace as a normal
+      # user: the package must allow raw sockets by itself.
+      - name: Test the package
+        run: |
+          sudo apt-get install -y ./dist/ttrace_*_amd64.deb
+          getcap /usr/bin/ttrace | grep -q cap_net_raw
+          ttrace --version
+          ttrace -r -c 2 -m 3 -n --no-as --no-geo 127.0.0.1 | tee out.txt
+          grep -q '127.0.0.1' out.txt
+          ttrace 127.0.0.1 -r -c 1 -m 2 -n --no-as --no-geo -4 | grep -q '127.0.0.1'   # options after the host
+          sudo apt-get remove -y ttrace
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: ttrace-dev
-          path: dist/ttrace-linux-*
+          name: dist
+          path: dist/
           retention-days: 1
 
       # Builds of main are only checked, not stored; only tagged versions are published.
@@ -65,9 +83,140 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          pre=""
-          case "$GITHUB_REF_NAME" in v0.*) pre="--prerelease" ;; esac  # 0.x = in development
-          gh release create "$GITHUB_REF_NAME" dist/* --title "ttrace $GITHUB_REF_NAME" --generate-notes $pre
+          gh release create "$GITHUB_REF_NAME" dist/* --title "ttrace $GITHUB_REF_NAME" --generate-notes
+
+  # APT repository on GitHub Pages (gh-pages branch). Every build makes and
+  # tests it locally; only tagged versions are published.
+  apt:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: site
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Build and sign the repository
+        env:
+          APT_GPG_KEY: ${{ secrets.APT_GPG_KEY }}
+        run: |
+          sudo apt-get install -y apt-utils >/dev/null
+          echo "$APT_GPG_KEY" | gpg --batch --import
+          packaging/apt-repo.sh site dist
+          find site -path site/.git -prune -o -type f -print | sort
+
+      # Installs from the freshly made repository (as files) in clean
+      # Debian and Ubuntu, checking the signature, before anything is published.
+      - name: Test the repository
+        run: |
+          for img in debian:stable-slim ubuntu:24.04; do
+            docker run --rm -v "$PWD/site:/repo:ro" $img sh -ec '
+              apt-get -qq update >/dev/null
+              mkdir -p /etc/apt/keyrings
+              cp /repo/ttrace.asc /etc/apt/keyrings/ttrace.asc
+              echo "deb [signed-by=/etc/apt/keyrings/ttrace.asc] file:/repo stable main" > /etc/apt/sources.list.d/ttrace.list
+              apt-get -qq update
+              apt-get -qq install -y ttrace >/dev/null
+              getcap /usr/bin/ttrace
+              ttrace --version'
+          done
+
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: site
+        run: |
+          git config user.name trelowney
+          git config user.email 54177826+trelowney@users.noreply.github.com
+          git add -A
+          git commit -q -m "ttrace $GITHUB_REF_NAME"
+          git push
+
+  # Checks the published repository the way people use it.
+  apt-check:
+    needs: apt
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install from trelowney.github.io
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          for i in $(seq 1 40); do   # GitHub Pages takes a moment to publish
+            curl -fsSL https://trelowney.github.io/ttrace/dists/stable/main/binary-amd64/Packages | grep -q "^Version: $V$" && break
+            sleep 15
+          done
+          for img in debian:stable-slim ubuntu:24.04; do
+            docker run --rm $img sh -ec '
+              apt-get -qq update >/dev/null && apt-get -qq install -y curl ca-certificates >/dev/null
+              mkdir -p /etc/apt/keyrings
+              curl -fsSL -o /etc/apt/keyrings/ttrace.asc https://trelowney.github.io/ttrace/ttrace.asc
+              echo "deb [signed-by=/etc/apt/keyrings/ttrace.asc] https://trelowney.github.io/ttrace stable main" > /etc/apt/sources.list.d/ttrace.list
+              apt-get -qq update
+              apt-get -qq install -y ttrace >/dev/null
+              ttrace --version' | tee out.txt
+            grep -q "ttrace $V" out.txt
+          done
+
+  # Homebrew formula in trelowney/homebrew-tap. Every build installs it from
+  # local files on a Mac; tagged versions are published and installed again
+  # from the tap.
+  brew:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Install from local files
+        run: |
+          V=$(sh -c 'case "$GITHUB_REF" in refs/tags/v*) echo "${GITHUB_REF_NAME#v}" ;; *) echo 0.0.0 ;; esac')
+          brew tap-new --no-git local/test
+          packaging/brew-formula.sh "$V" "file://$PWD/dist" dist > "$(brew --repository)/Library/Taps/local/homebrew-test/Formula/ttrace.rb"
+          brew install local/test/ttrace
+          ttrace --version
+          sudo ttrace -r -c 2 -m 3 -n --no-as --no-geo 127.0.0.1 | tee out.txt
+          grep -q 127.0.0.1 out.txt
+          brew test local/test/ttrace || true   # the dev build's version is not 0.0.0
+          brew uninstall ttrace
+          brew untap local/test
+
+      - name: Publish to the tap
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          mkdir -p ~/.ssh && echo "$TAP_DEPLOY_KEY" > ~/.ssh/tap && chmod 600 ~/.ssh/tap
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/tap -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git clone -q git@github.com:trelowney/homebrew-tap.git tap
+          mkdir -p tap/Formula
+          packaging/brew-formula.sh "$V" "https://github.com/trelowney/ttrace/releases/download/$GITHUB_REF_NAME" dist > tap/Formula/ttrace.rb
+          cd tap
+          git config user.name trelowney
+          git config user.email 54177826+trelowney@users.noreply.github.com
+          git add -A
+          git commit -q -m "ttrace $V"
+          git push -q
+          rm ~/.ssh/tap
+
+      - name: Install from the tap
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          brew install trelowney/tap/ttrace
+          ttrace --version | grep -q "ttrace ${GITHUB_REF_NAME#v}"
+          brew test trelowney/tap/ttrace
 
   # Windows window (WinUI 3): one ttrace-gui-windows-<cpu>.exe with
   # everything inside, ttrace.exe too. Nothing to unpack or install.
