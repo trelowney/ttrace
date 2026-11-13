@@ -57,3 +57,23 @@ func TestMissingFile(t *testing.T) {
 		t.Fatal("nil DB")
 	}
 }
+
+func TestFailedDownloadWaits(t *testing.T) {
+	d := Open(filepath.Join(t.TempDir(), "ix.json"))
+	if !d.Stale() {
+		t.Fatal("missing data must be stale")
+	}
+	if err := os.WriteFile(d.failedPath(), []byte("429\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if d.Stale() {
+		t.Fatal("must not try again right after a failed download")
+	}
+	old := time.Now().Add(-2 * RetryAfter)
+	if err := os.Chtimes(d.failedPath(), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if !d.Stale() {
+		t.Fatal("must try again an hour after a failed download")
+	}
+}

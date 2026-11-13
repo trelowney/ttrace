@@ -121,10 +121,19 @@ func (d *DB) Stale() bool {
 	if d == nil {
 		return false
 	}
+	if st, err := os.Stat(d.failedPath()); err == nil && time.Since(st.ModTime()) < RetryAfter {
+		return false // a download failed a short while ago: do not ask PeeringDB again yet
+	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.data == nil || time.Since(d.data.f.Updated) > MaxAge
 }
+
+// RetryAfter is how long after a failed download Start waits before trying again.
+const RetryAfter = time.Hour
+
+// failedPath marks the time of the last failed download.
+func (d *DB) failedPath() string { return d.path + ".failed" }
 
 // Lookup tells whether ip is on an exchange and who uses it.
 func (d *DB) Lookup(ip net.IP) (Hit, bool) {
@@ -169,6 +178,11 @@ func (d *DB) Start(ctx context.Context) {
 	go func() {
 		defer d.wg.Done()
 		err := d.Download(ctx)
+		if err != nil && ctx.Err() == nil {
+			if os.MkdirAll(filepath.Dir(d.path), 0o755) == nil {
+				os.WriteFile(d.failedPath(), []byte(err.Error()+"\n"), 0o644)
+			}
+		}
 		d.smu.Lock()
 		d.running = false
 		if err != nil && ctx.Err() == nil {
@@ -356,5 +370,6 @@ func (d *DB) Download(ctx context.Context) error {
 	d.mu.Lock()
 	d.data = p
 	d.mu.Unlock()
+	os.Remove(d.failedPath())
 	return nil
 }
