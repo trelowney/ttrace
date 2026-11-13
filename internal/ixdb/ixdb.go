@@ -260,7 +260,7 @@ func getOnce(ctx context.Context, query string, into any) (time.Duration, error)
 		}
 		err := fmt.Errorf("www.peeringdb.com answered %s — it will be tried again on the next run", resp.Status)
 		if wait > time.Minute {
-			return 0, err
+			return 0, fmt.Errorf("www.peeringdb.com asks to wait %d minutes before the next download — ttrace tries again later by itself", int((wait+time.Minute-1)/time.Minute))
 		}
 		return wait, err
 	}
