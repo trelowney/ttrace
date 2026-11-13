@@ -51,7 +51,7 @@ func MTUText(w io.Writer, r MTUReport, m NameMode, showAS, wide bool) {
 		from = " (MTU of " + r.Iface + ")"
 	}
 	fmt.Fprintf(w, "ttrace --mtu to %s (%s), starting with %d bytes%s\n", r.Target, r.IP, r.Start, from)
-	nameW := 40
+	nameW := 36
 	if wide {
 		nameW = 0
 	}
@@ -80,7 +80,7 @@ func MTUText(w io.Writer, r MTUReport, m NameMode, showAS, wide bool) {
 			}
 			as += ASLabel(h.ASName, h.IX, !wide)
 			if nameW > 0 {
-				as = Fit(as, 24)
+				as = Fit(as, 30)
 			}
 		}
 		size := ""
@@ -89,7 +89,7 @@ func MTUText(w io.Writer, r MTUReport, m NameMode, showAS, wide bool) {
 		}
 		line := fmt.Sprintf("%3d. %s  %s", h.TTL, name, size)
 		if showAS {
-			line = fmt.Sprintf("%3d. %s  %-24s  %5s", h.TTL, name, as, size)
+			line = fmt.Sprintf("%3d. %s  %-30s  %5s", h.TTL, name, as, size)
 		}
 		fmt.Fprintln(w, trimRight(line))
 		for _, d := range drops[h.TTL] {
