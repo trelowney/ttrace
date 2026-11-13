@@ -18,6 +18,26 @@ type Result struct {
 	Reached bool // echo reply from the target itself
 	Unreach bool  // destination unreachable
 	MPLS    []int // MPLS labels the router reported in the ICMP extensions (RFC 4950)
+	// TOS / traffic class byte of our probe as the router received it, read
+	// from the copy of the packet inside its ICMP error. HasTOS is false
+	// when the answer had no such copy (echo reply, Windows).
+	TOS    int
+	HasTOS bool
+}
+
+// QuotedTOS reads the TOS (IPv4) or traffic class (IPv6) byte from the start
+// of a packet quoted in an ICMP error.
+func QuotedTOS(data []byte, v6 bool) (int, bool) {
+	if v6 {
+		if len(data) < 2 || data[0]>>4 != 6 {
+			return 0, false
+		}
+		return int(data[0]&0x0f)<<4 | int(data[1]>>4), true
+	}
+	if len(data) < 2 || data[0]>>4 != 4 {
+		return 0, false
+	}
+	return int(data[1]), true
 }
 
 // Prober sends probes towards one destination. Probe is safe for concurrent use.

@@ -43,6 +43,9 @@ func TestParseUDPWithMPLS(t *testing.T) {
 	if len(r.mpls) != 2 || r.mpls[0] != 24001 || r.mpls[1] != 16005 {
 		t.Errorf("mpls: %v", r.mpls)
 	}
+	if !r.hasTOS || r.tos != 0 {
+		t.Errorf("tos: %d %v", r.tos, r.hasTOS)
+	}
 	// another destination port is somebody else's probe
 	binary.BigEndian.PutUint16(udp[2:4], 53)
 	if _, ok := p.inner(quoted(17, dst, udp)); ok {

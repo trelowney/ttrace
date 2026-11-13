@@ -26,6 +26,8 @@ type reply struct {
 	reached bool
 	unreach bool
 	mpls    []int
+	tos     int
+	hasTOS  bool
 }
 
 // unixProber reads every answer from one raw ICMP socket. ICMP probes go out
@@ -168,6 +170,7 @@ func (res *Result) fill(r reply, start time.Time) {
 	res.Reached = r.reached
 	res.Unreach = r.unreach
 	res.MPLS = r.mpls
+	res.TOS, res.HasTOS = r.tos, r.hasTOS
 }
 
 func (p *unixProber) probeICMP(ctx context.Context, ttl, seq int, timeout time.Duration) Result {
@@ -419,7 +422,8 @@ func (p *unixProber) parse(proto int, b []byte, peer net.IP, at time.Time) (int,
 			break
 		}
 		if key, ok := p.inner(te.Data); ok {
-			return key, reply{addr: from, at: at, mpls: mplsLabels(te.Extensions)}, true
+			tos, has := QuotedTOS(te.Data, p.v6)
+			return key, reply{addr: from, at: at, mpls: mplsLabels(te.Extensions), tos: tos, hasTOS: has}, true
 		}
 	case ipv4.ICMPTypeDestinationUnreachable, ipv6.ICMPTypeDestinationUnreachable:
 		du, ok := m.Body.(*icmp.DstUnreach)
@@ -430,7 +434,8 @@ func (p *unixProber) parse(proto int, b []byte, peer net.IP, at time.Time) (int,
 			// for UDP and TCP an unreachable from the target itself (normally
 			// "port unreachable") means the probe got there
 			reached := p.proto != "icmp" && from.Equal(p.dst)
-			return key, reply{addr: from, at: at, reached: reached, unreach: !reached, mpls: mplsLabels(du.Extensions)}, true
+			tos, has := QuotedTOS(du.Data, p.v6)
+			return key, reply{addr: from, at: at, reached: reached, unreach: !reached, mpls: mplsLabels(du.Extensions), tos: tos, hasTOS: has}, true
 		}
 	}
 	return 0, reply{}, false

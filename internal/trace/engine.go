@@ -14,6 +14,7 @@ import (
 
 	"github.com/trelowney/ttrace/internal/asinfo"
 	"github.com/trelowney/ttrace/internal/geo"
+	"github.com/trelowney/ttrace/internal/ixdb"
 	"github.com/trelowney/ttrace/internal/probe"
 )
 
@@ -29,8 +30,10 @@ type Config struct {
 	Timeout  time.Duration
 	Count    int  // rounds to run, 0 = until cancelled
 	DNS      bool // reverse DNS lookups
-	AS       bool    // AS lookups
-	Geo      *geo.DB // approximate places of routers; nil or not downloaded = none
+	AS       bool     // AS lookups
+	Geo      *geo.DB  // approximate places of routers; nil or not downloaded = none
+	IX       *ixdb.DB // internet exchanges; nil or not downloaded = none
+	TOS      int      // TOS / traffic class byte the probes are sent with
 }
 
 // Hop is one row of the result. Times are in milliseconds.
@@ -57,6 +60,9 @@ type Hop struct {
 	MPLS     []int     `json:"mpls,omitempty"`      // MPLS labels reported by the router
 	Others   []Other   `json:"others,omitempty"`    // more routers that answered for this hop (parallel paths)
 	Place    *geo.Place `json:"place,omitempty"`    // approximate place of the router (needs the location database)
+	IX       string     `json:"ix,omitempty"`       // internet exchange the address is on; ASN is then the member using it
+	TOSSeen  *int       `json:"tos_seen,omitempty"` // TOS / traffic class byte of our probe as this router received it
+	Jump     float64    `json:"jump_ms,omitempty"`  // latency rises here by this much and stays higher on the following hops
 }
 
 // Other is an additional address that answered for the same hop, usually
@@ -70,6 +76,7 @@ type Other struct {
 	Private bool   `json:"private,omitempty"`
 	Seen    int    `json:"seen"` // how many answers came from this address
 	MPLS    []int  `json:"mpls,omitempty"`
+	IX      string `json:"ix,omitempty"`
 }
 
 // Snapshot is a consistent copy of the current state.
@@ -83,6 +90,17 @@ type Snapshot struct {
 	Hops    []Hop  `json:"hops"`
 	Links   []Link `json:"links,omitempty"`
 	Geo     string `json:"geo,omitempty"` // state of the location data download, for showing next to the map
+	TOSSent int    `json:"tos_sent"`      // TOS / traffic class byte the probes were sent with
+	// ASPath lists the networks the route passes through, in order; an
+	// internet exchange is a step of its own.
+	ASPath []PathStep `json:"as_path,omitempty"`
+}
+
+// PathStep is one network on the route: an AS, or an internet exchange (IX set).
+type PathStep struct {
+	ASN  string `json:"asn,omitempty"`
+	Name string `json:"name,omitempty"`
+	IX   string `json:"ix,omitempty"`
 }
 
 // Link says that within one round the router From answered at hop FromTTL
@@ -105,6 +123,7 @@ type hopStats struct {
 	order                   []string       // all answering addresses, first seen first
 	seen                    map[string]int // answers per address
 	mpls                    map[string][]int
+	tos                     map[string]int // TOS byte quoted by each address
 	sent, recv              int
 	last, best, worst, mean float64
 	m2                      float64 // Welford running variance
@@ -127,6 +146,10 @@ type Engine struct {
 	asked   map[string]bool
 	lookups sync.WaitGroup
 
+	ixHits    map[string]ixdb.Hit // exchange data per address, once the data is there
+	asNames   map[string]string   // names of member ASes found on exchanges
+	nameAsked map[string]bool
+
 	seq    atomic.Uint32
 	paused atomic.Bool
 }
@@ -142,6 +165,10 @@ func New(cfg Config, p probe.Prober) *Engine {
 		names:  map[string]string{},
 		asinfo: map[string]asinfo.Info{},
 		asked:  map[string]bool{},
+
+		ixHits:    map[string]ixdb.Hit{},
+		asNames:   map[string]string{},
+		nameAsked: map[string]bool{},
 	}
 	e.reset()
 	return e
@@ -304,7 +331,7 @@ func (e *Engine) record(results []probe.Result, gen int) bool {
 		addr := r.Addr.String()
 		if h.seen == nil {
 			h.addr = addr
-			h.seen, h.mpls = map[string]int{}, map[string][]int{}
+			h.seen, h.mpls, h.tos = map[string]int{}, map[string][]int{}, map[string]int{}
 		}
 		if h.seen[addr] == 0 {
 			h.order = append(h.order, addr)
@@ -312,6 +339,9 @@ func (e *Engine) record(results []probe.Result, gen int) bool {
 		h.seen[addr]++
 		if r.MPLS != nil {
 			h.mpls[addr] = r.MPLS
+		}
+		if r.HasTOS {
+			h.tos[addr] = r.TOS
 		}
 		if !e.asked[addr] {
 			e.asked[addr] = true
@@ -399,7 +429,7 @@ func (e *Engine) WaitLookups(d time.Duration) {
 func (e *Engine) Snapshot() Snapshot {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	s := Snapshot{Target: e.cfg.Target, IP: e.cfg.IP.String(), Family: "IPv4", Round: e.round, Reached: e.destTTL > 0, Probe: e.cfg.Probe}
+	s := Snapshot{Target: e.cfg.Target, IP: e.cfg.IP.String(), Family: "IPv4", Round: e.round, Reached: e.destTTL > 0, Probe: e.cfg.Probe, TOSSent: e.cfg.TOS}
 	if e.cfg.IP.To4() == nil {
 		s.Family = "IPv6"
 	}
@@ -438,7 +468,19 @@ func (e *Engine) Snapshot() Snapshot {
 				row.ASN, row.ASName, row.Country = a.ASN, a.Name, a.Country
 				row.Prefix, row.Registry, row.Private = a.Prefix, a.Registry, a.Private
 			}
+			if x, ok := e.exchange(h.addr); ok {
+				row.IX = x.IX
+				if x.ASN != "" {
+					// the member using the address, not who registered the exchange's block
+					row.ASN, row.ASName = x.ASN, e.asNames[x.ASN]
+				} else { // the block's owner (often the exchange itself) would mislead
+					row.ASN, row.ASName = "", ""
+				}
+			}
 			row.MPLS = h.mpls[h.addr]
+			if t, ok := h.tos[h.addr]; ok {
+				row.TOSSeen = &t
+			}
 			if p, ok := e.cfg.Geo.Lookup(net.ParseIP(h.addr)); ok {
 				row.Place = &p
 			}
@@ -447,11 +489,21 @@ func (e *Engine) Snapshot() Snapshot {
 				if a, ok := e.asinfo[addr]; ok {
 					o.ASN, o.ASName, o.Country, o.Private = a.ASN, a.Name, a.Country, a.Private
 				}
+				if x, ok := e.exchange(addr); ok {
+					o.IX = x.IX
+					if x.ASN != "" {
+						o.ASN, o.ASName = x.ASN, e.asNames[x.ASN]
+					} else {
+						o.ASN, o.ASName = "", ""
+					}
+				}
 				row.Others = append(row.Others, o)
 			}
 		}
 		s.Hops = append(s.Hops, row)
 	}
+	MarkJumps(s.Hops)
+	s.ASPath = ASPath(s.Hops)
 	hide := func(addr string, ttl int) string {
 		if ttl >= 1 && ttl <= e.cfg.Hide {
 			return "(hidden)"
@@ -477,3 +529,100 @@ func (e *Engine) Snapshot() Snapshot {
 }
 
 func round2(v float64) float64 { return math.Round(v*100) / 100 }
+
+// exchange looks addr up in the list of internet exchanges. Caller holds mu.
+// Answers are kept once the list is there; while it is still downloading
+// nothing is kept, so the address is looked up again later.
+func (e *Engine) exchange(addr string) (ixdb.Hit, bool) {
+	if !e.cfg.AS || !e.cfg.IX.Ready() {
+		return ixdb.Hit{}, false
+	}
+	x, ok := e.ixHits[addr]
+	if !ok {
+		x, _ = e.cfg.IX.Lookup(net.ParseIP(addr))
+		e.ixHits[addr] = x
+		if x.ASN != "" && !e.nameAsked[x.ASN] {
+			e.nameAsked[x.ASN] = true
+			e.lookups.Add(1)
+			go func(asn string) {
+				defer e.lookups.Done()
+				ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+				defer cancel()
+				if name := e.as.Name(ctx, asn); name != "" {
+					e.mu.Lock()
+					e.asNames[asn] = name
+					e.mu.Unlock()
+				}
+			}(x.ASN)
+		}
+	}
+	return x, x.IX != ""
+}
+
+// Jumps smaller than this are not marked: a few milliseconds come and go.
+const (
+	jumpMinMs  = 10.0
+	jumpMinPct = 25.0
+)
+
+// MarkJumps sets Jump on hops where the latency rises clearly and stays
+// higher on all the following hops. A router that is only slow to answer
+// itself (it gives ICMP low priority) is not marked, because the hops
+// behind it are faster again. Fastest answers (Best) are compared, they
+// show the distance best.
+func MarkJumps(hops []Hop) {
+	prev := -1.0
+	for i := range hops {
+		hops[i].Jump = 0
+		if hops[i].Recv == 0 {
+			continue
+		}
+		b := hops[i].Best
+		if prev < 0 || b <= prev {
+			prev = b
+			continue
+		}
+		d := b - prev
+		if d < jumpMinMs || d < prev*jumpMinPct/100 {
+			prev = b
+			continue
+		}
+		stays := true
+		for j := i + 1; j < len(hops); j++ {
+			if hops[j].Recv > 0 && hops[j].Best < prev+d/2 {
+				stays = false
+				break
+			}
+		}
+		if stays {
+			hops[i].Jump = round2(d)
+			prev = b
+		}
+	}
+}
+
+// ASPath lists the networks along the route in order. Hops without a known
+// AS, private and hidden hops are left out; an internet exchange is a step
+// of its own, followed by the network behind it.
+func ASPath(hops []Hop) []PathStep {
+	var path []PathStep
+	last := ""
+	for _, h := range hops {
+		if h.Addr == "" || h.Hidden || h.Private {
+			continue
+		}
+		if h.IX != "" {
+			if len(path) == 0 || path[len(path)-1].IX != h.IX {
+				path = append(path, PathStep{IX: h.IX})
+			}
+			last = ""
+			continue
+		}
+		if h.ASN == "" || h.ASN == last {
+			continue
+		}
+		path = append(path, PathStep{ASN: h.ASN, Name: h.ASName})
+		last = h.ASN
+	}
+	return path
+}

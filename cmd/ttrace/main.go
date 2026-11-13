@@ -19,8 +19,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/trelowney/ttrace/internal/asinfo"
 	"github.com/trelowney/ttrace/internal/config"
 	"github.com/trelowney/ttrace/internal/geo"
+	"github.com/trelowney/ttrace/internal/ixdb"
 	"github.com/trelowney/ttrace/internal/probe"
 	"github.com/trelowney/ttrace/internal/report"
 	"github.com/trelowney/ttrace/internal/trace"
@@ -47,6 +49,10 @@ Examples:
                                           draw the route as a picture with Graphviz
   ttrace example.com, then press m        the route on a world map; the location data
                                           (%s) is downloaded automatically on the first run
+  ttrace --mtu example.com                biggest packet that gets through, and where it
+                                          gets smaller (Linux only)
+  ttrace -j -c 20 example.com > before.json   save a measurement, later another one, then
+  ttrace --compare before.json after.json     show what changed between them
 
 Settings file: options can also be written into %s,
 one per line with the same names as below, e.g. "interval = 2s" or "no-as".
@@ -108,11 +114,14 @@ type options struct {
 	count, firstTTL, maxTTL, giveUp, hide, size, tos, port *int
 	reportMode, jsonMode, wide, jsonStream, only4, only6   *bool
 	noDNS, noAS, showVer, geoUpdate, noGeo                 *bool
+	mtu, compare                                           *bool
 	format, source, probeType                              *string
 	interval, timeout                                      *time.Duration
 }
 
 func defineFlags() options {
+	showVer := flag.Bool("v", false, "print version and exit")
+	flag.BoolVar(showVer, "version", false, "print version and exit")
 	return options{
 		count:      flag.Int("c", 0, "number of rounds (default: endless in live view, 10 with -r/-j)"),
 		reportMode: flag.Bool("r", false, "report mode: run -c rounds, print the result and exit"),
@@ -135,9 +144,11 @@ func defineFlags() options {
 		only6:      flag.Bool("6", false, "use IPv6 only"),
 		noDNS:      flag.Bool("n", false, "do not look up host names, show IP addresses (key n in the live view switches name / IP / both)"),
 		noAS:       flag.Bool("no-as", false, "do not look up AS number, AS name and country"),
-		showVer:    flag.Bool("v", false, "print version and exit"),
-		geoUpdate:  flag.Bool("geo-update", false, "download the newest location data for the map now and exit (normally this happens automatically)"),
-		noGeo:      flag.Bool("no-geo", false, "do not download the location data for the map ("+geo.Size+"); a copy downloaded before is still used"),
+		showVer:    showVer,
+		geoUpdate:  flag.Bool("geo-update", false, "download the newest location data for the map and the list of internet exchanges now and exit (normally this happens automatically)"),
+		noGeo:      flag.Bool("no-geo", false, "do not download the location data for the map ("+geo.Size+") and the list of internet exchanges ("+ixdb.Size+"); copies downloaded before are still used"),
+		mtu:        flag.Bool("mtu", false, "find the biggest packet that gets to the host in one piece and where it gets smaller (Linux only, uses ICMP)"),
+		compare:    flag.Bool("compare", false, "compare two saved reports: ttrace --compare before.json after.json (save them with ttrace -j -c 20 <host> > file.json)"),
 	}
 }
 
@@ -151,9 +162,19 @@ func run(o options) {
 		fmt.Println("ttrace", version)
 		return
 	}
+	names := report.NameHost
+	if *noDNS {
+		names = report.NameIP
+	}
+	if *o.compare {
+		compareFiles(names)
+		return
+	}
 	gdb, gerr := geo.Open(geo.DefaultPath())
+	ix := ixdb.Open(ixdb.DefaultPath())
 	if *o.geoUpdate {
 		updateGeo(gdb)
+		updateIX(ix)
 		return
 	}
 	if gerr != nil && *o.noGeo {
@@ -188,6 +209,22 @@ func run(o options) {
 	}
 	if *jsonMode {
 		*reportMode, *format = true, "json"
+	}
+	if *o.mtu {
+		if *probeType != "icmp" {
+			fail("--mtu always uses ICMP, leave out -P")
+		}
+		if *format != "text" && *format != "json" {
+			fail("--mtu writes text or JSON (-j), not " + *format)
+		}
+		var src net.IP
+		if *source != "" {
+			if src = net.ParseIP(*source); src == nil {
+				fail("-a needs an IP address, e.g. -a 192.0.2.5")
+			}
+		}
+		runMTU(*maxTTL, *timeout, src, *only4, *only6, *format == "json", names, !*noAS, *wide)
+		return
 	}
 	if *format != "text" && !*jsonStream {
 		*reportMode = true // other formats only make sense as a report
@@ -224,16 +261,14 @@ func run(o options) {
 		// live view shows the progress in the map (key m).
 		gdb.Start(ctx, nil)
 	}
+	if !*o.noGeo && !*noAS && ix.Stale() {
+		ix.Start(ctx) // the list of internet exchanges, refreshed every two weeks
+	}
 
 	batch := *reportMode
 	if batch && *count == 0 {
 		*count = 10
 	}
-	names := report.NameHost
-	if *noDNS {
-		names = report.NameIP
-	}
-
 	var tabs []tui.Tab
 	for _, target := range flag.Args() {
 		ip, err := resolve(ctx, target, *only4, *only6)
@@ -258,6 +293,8 @@ func run(o options) {
 			DNS:      !*noDNS,
 			AS:       !*noAS,
 			Geo:      gdb,
+			IX:       ix,
+			TOS:      *tos,
 		}, p)
 		defer eng.Close()
 		tab := tui.Tab{Eng: eng}
@@ -292,8 +329,16 @@ func run(o options) {
 			fmt.Fprintf(os.Stderr, "ttrace: finishing the download of the location data (%s, first run only)…\n", geo.Size)
 			gdb.Wait()
 		}
+		if ix.Running() {
+			fmt.Fprintf(os.Stderr, "ttrace: finishing the download of the list of internet exchanges (%s, every two weeks)…\n", ixdb.Size)
+			ix.Wait()
+		}
 		var snaps []trace.Snapshot
 		for _, t := range tabs {
+			// Twice: the first snapshot can start new lookups (names of
+			// networks met on an internet exchange).
+			t.Eng.WaitLookups(5 * time.Second)
+			t.Eng.Snapshot()
 			t.Eng.WaitLookups(5 * time.Second)
 			snaps = append(snaps, t.Eng.Snapshot())
 		}
@@ -361,6 +406,121 @@ func updateGeo(d *geo.DB) {
 		fail(err.Error())
 	}
 	fmt.Fprintf(os.Stderr, "Saved to %s\nThe live view now shows the route on a map: press m.\n%s\n", d.Path(), geo.Attribution)
+}
+
+// updateIX downloads the list of internet exchanges from PeeringDB.
+func updateIX(d *ixdb.DB) {
+	fmt.Fprintf(os.Stderr, "Downloading the list of internet exchanges (%s) from PeeringDB…\n", ixdb.Size)
+	if err := d.Download(context.Background()); err != nil {
+		fail(err.Error())
+	}
+	fmt.Fprintf(os.Stderr, "Saved to %s\n", d.Path())
+}
+
+// compareFiles is ttrace --compare before.json after.json.
+func compareFiles(names report.NameMode) {
+	if flag.NArg() != 2 {
+		fail("--compare needs two saved reports: ttrace --compare before.json after.json\nSave one with: ttrace -j -c 20 <host> > before.json")
+	}
+	a, b := flag.Arg(0), flag.Arg(1)
+	before, err := report.ReadSaved(a)
+	if err != nil {
+		fail(err.Error())
+	}
+	after, err := report.ReadSaved(b)
+	if err != nil {
+		fail(err.Error())
+	}
+	if err := report.Compare(os.Stdout, a, before, b, after, names); err != nil {
+		fail(err.Error())
+	}
+}
+
+// runMTU is ttrace --mtu: the path MTU to every target, one after another.
+func runMTU(maxTTL int, timeout time.Duration, src net.IP, only4, only6, asJSON bool, names report.NameMode, showAS, wide bool) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if flag.NArg() < 1 {
+		flag.Usage()
+		os.Exit(2)
+	}
+	st, _ := os.Stderr.Stat()
+	live := st != nil && st.Mode()&os.ModeCharDevice != 0
+	progress := func(msg string) {
+		if live {
+			fmt.Fprintf(os.Stderr, "\r\033[K%s", msg)
+		}
+	}
+	asr := asinfo.NewResolver()
+	var reps []report.MTUReport
+	failed := false
+	for i, target := range flag.Args() {
+		ip, err := resolve(ctx, target, only4, only6)
+		if err != nil {
+			fail(err.Error())
+		}
+		res, err := probe.PathMTU(ctx, ip, src, maxTTL, timeout, progress)
+		if live {
+			fmt.Fprint(os.Stderr, "\r\033[K")
+		}
+		rep := report.MTUReport{Target: target, IP: ip.String(), Family: "IPv4", Start: res.Start, Iface: res.Iface, PathMTU: res.PathMTU, Reached: res.Reached, Drops: res.Drops}
+		if ip.To4() == nil {
+			rep.Family = "IPv6"
+		}
+		if err != nil {
+			if len(res.Hops) == 0 && ctx.Err() == nil {
+				fail(err.Error())
+			}
+			rep.Error = err.Error()
+			failed = true
+		}
+		// The silent hops at the end tell nothing.
+		for len(res.Hops) > 0 && res.Hops[len(res.Hops)-1].Addr == nil {
+			res.Hops = res.Hops[:len(res.Hops)-1]
+		}
+		rep.Hops = make([]report.MTUHop, len(res.Hops))
+		var wg sync.WaitGroup
+		for j, h := range res.Hops {
+			rep.Hops[j] = report.MTUHop{TTL: h.TTL, Size: h.Size}
+			if h.Addr == nil {
+				continue
+			}
+			rep.Hops[j].Addr = h.Addr.String()
+			wg.Add(1)
+			go func(x *report.MTUHop, addr net.IP) {
+				defer wg.Done()
+				lctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if names != report.NameIP {
+					if n, err := net.DefaultResolver.LookupAddr(lctx, addr.String()); err == nil && len(n) > 0 {
+						x.Host = strings.TrimSuffix(n[0], ".")
+					}
+				}
+				if showAS {
+					if info, err := asr.Lookup(lctx, addr); err == nil {
+						x.ASN, x.ASName = info.ASN, info.Name
+					}
+				}
+			}(&rep.Hops[j], h.Addr)
+		}
+		wg.Wait()
+		if !asJSON {
+			if i > 0 {
+				fmt.Println()
+			}
+			report.MTUText(os.Stdout, rep, names, showAS, wide)
+		}
+		reps = append(reps, rep)
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	if asJSON {
+		report.MTUJSON(os.Stdout, reps)
+	}
+	if failed {
+		os.Exit(1)
+	}
 }
 
 // runAll traces all targets at the same time until each is done.

@@ -252,6 +252,7 @@ func (v *view) draw() {
 	v.put(0, 3, report.Fit(head, w), stHead)
 
 	y := 3
+	dscp := report.DSCPNotes(s)
 	for _, h := range s.Hops {
 		if y++; y >= hgt {
 			break
@@ -264,7 +265,7 @@ func (v *view) draw() {
 		x = v.put(x, y, report.Fit(report.Label(h, v.opt.Names), hostW), hs)
 		if v.opt.ShowAS {
 			x = v.put(x, y, " "+report.Fit(report.ASN(h), 9)+" ", stAS)
-			x = v.put(x, y, report.Fit(h.ASName, nameW)+" ", stDefault)
+			x = v.put(x, y, report.Fit(report.ASLabel(h.ASName, h.IX, true), nameW)+" ", stDefault)
 			x = v.put(x, y, report.Fit(h.Country, 2)+" ", stBold)
 		}
 		st := stDefault
@@ -278,12 +279,23 @@ func (v *view) draw() {
 			x = v.put(x, y, fmt.Sprintf(" %5.1f%% ", h.Loss), st)
 			v.bars(x, y, h.Recent, w-x)
 		} else {
-			v.put(x, y, " "+report.Stats(h), st)
+			x = v.put(x, y, " "+report.Stats(h), st)
+			if j := report.Jump(h); j != "" {
+				v.put(x, y, " "+j, stWarn)
+			}
+		}
+		if n := dscp[h.TTL]; n != "" && y+1 < hgt {
+			y++
+			v.put(6, y, "["+n+"]", stWarn)
 		}
 		y = v.extra(y, h, hostW, nameW, hgt)
 	}
 	if len(s.Hops) == 0 {
 		v.put(0, 4, "waiting for the first round…", stDim)
+	}
+	if p := report.ASPath(s); v.opt.ShowAS && p != "" && y+2 < hgt {
+		v.put(0, y+2, "AS path: ", stDim)
+		v.put(9, y+2, p, stAS)
 	}
 	v.scr.Show()
 }
@@ -303,7 +315,7 @@ func (v *view) extra(y int, h trace.Hop, hostW, nameW, hgt int) int {
 		x := v.put(4, y, report.Fit(report.OtherLabel(o, v.opt.Names), hostW), stDim)
 		if v.opt.ShowAS {
 			x = v.put(x, y, " "+report.Fit(report.OtherASN(o), 9)+" ", stAS)
-			x = v.put(x, y, report.Fit(o.ASName, nameW)+" ", stDim)
+			x = v.put(x, y, report.Fit(report.ASLabel(o.ASName, o.IX, true), nameW)+" ", stDim)
 			x = v.put(x, y, report.Fit(o.Country, 2)+" ", stDim)
 		}
 		note := " " + report.Seen(o)

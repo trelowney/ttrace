@@ -56,19 +56,25 @@ func (r *Resolver) Lookup(ctx context.Context, ip net.IP) (Info, error) {
 	if info.ASN == "" {
 		return info, nil
 	}
-	r.mu.Lock()
-	name, ok := r.names[info.ASN]
-	r.mu.Unlock()
-	if !ok {
-		if t, err := r.r.LookupTXT(ctx, "AS"+info.ASN+".asn.cymru.com"); err == nil && len(t) > 0 {
-			name = ParseName(t[0])
-			r.mu.Lock()
-			r.names[info.ASN] = name
-			r.mu.Unlock()
-		}
-	}
-	info.Name = name
+	info.Name = r.Name(ctx, info.ASN)
 	return info, nil
+}
+
+// Name returns the name of an AS ("" when it cannot be found).
+func (r *Resolver) Name(ctx context.Context, asn string) string {
+	r.mu.Lock()
+	name, ok := r.names[asn]
+	r.mu.Unlock()
+	if ok {
+		return name
+	}
+	if t, err := r.r.LookupTXT(ctx, "AS"+asn+".asn.cymru.com"); err == nil && len(t) > 0 {
+		name = ParseName(t[0])
+		r.mu.Lock()
+		r.names[asn] = name
+		r.mu.Unlock()
+	}
+	return name
 }
 
 // OriginQuery builds the DNS name for the origin lookup of ip.

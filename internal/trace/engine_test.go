@@ -139,3 +139,70 @@ func TestLinks(t *testing.T) {
 		t.Fatalf("links: %+v", l)
 	}
 }
+
+func TestMarkJumps(t *testing.T) {
+	hop := func(best float64) Hop { return Hop{Recv: 1, Best: best} }
+	hops := []Hop{
+		hop(1), hop(2),
+		hop(40),          // slow to answer itself, the next hops are fast again: not marked
+		hop(3), {Recv: 0}, // silent hop is skipped
+		hop(30),           // real jump of 27 ms that stays
+		hop(31), hop(29),
+	}
+	MarkJumps(hops)
+	for i, want := range []float64{0, 0, 0, 0, 0, 27, 0, 0} {
+		if hops[i].Jump != want {
+			t.Errorf("hop %d: jump %v, want %v", i+1, hops[i].Jump, want)
+		}
+	}
+	// a small rise is not a jump
+	small := []Hop{hop(100), hop(108), hop(109)}
+	MarkJumps(small)
+	if small[1].Jump != 0 {
+		t.Errorf("8 ms on 100 ms marked: %v", small[1].Jump)
+	}
+}
+
+func TestASPath(t *testing.T) {
+	hops := []Hop{
+		{Addr: "192.168.1.1", Private: true},
+		{Addr: "198.51.100.1", ASN: "209874", ASName: "TECHTIDE - Tech Tide"},
+		{Addr: "198.51.100.2", ASN: "49581", ASName: "TUBE-HOSTING"},
+		{},
+		{Addr: "198.51.100.3", ASN: "49581", ASName: "TUBE-HOSTING"},
+		{Addr: "185.1.160.217", ASN: "13335", ASName: "CLOUDFLARENET", IX: "Frys-IX"},
+		{Addr: "203.0.113.1", ASN: "13335", ASName: "CLOUDFLARENET"},
+		{Addr: "203.0.113.2"}, // AS not known (yet)
+	}
+	got := ASPath(hops)
+	want := []PathStep{{ASN: "209874", Name: "TECHTIDE - Tech Tide"}, {ASN: "49581", Name: "TUBE-HOSTING"}, {IX: "Frys-IX"}, {ASN: "13335", Name: "CLOUDFLARENET"}}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("step %d: %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// tosProber is fakeProber whose second router reports a changed TOS byte.
+type tosProber struct{ fakeProber }
+
+func (f tosProber) Probe(ctx context.Context, ttl, seq int, d time.Duration) probe.Result {
+	r := f.fakeProber.Probe(ctx, ttl, seq, d)
+	if ttl == 1 {
+		r.TOS, r.HasTOS = 184, true
+	}
+	return r
+}
+
+func TestTOSSeen(t *testing.T) {
+	dst := net.ParseIP("192.0.2.10")
+	e := New(Config{Target: "example", IP: dst, MaxTTL: 30, Interval: time.Millisecond, Timeout: time.Second, Count: 1, TOS: 184}, tosProber{fakeProber{dst}})
+	e.Run(context.Background(), nil)
+	s := e.Snapshot()
+	if s.TOSSent != 184 || s.Hops[0].TOSSeen == nil || *s.Hops[0].TOSSeen != 184 || s.Hops[2].TOSSeen != nil {
+		t.Fatalf("sent %d, hops %+v", s.TOSSent, s.Hops)
+	}
+}
