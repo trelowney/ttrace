@@ -164,9 +164,8 @@ jobs:
             grep -q "ttrace $V" out.txt
           done
 
-  # Homebrew formula in trelowney/homebrew-tap. Every build installs it from
-  # local files on a Mac; tagged versions are published and installed again
-  # from the tap.
+  # Homebrew formula. Every build installs it from local files on a Mac;
+  # tagged versions are published and installed again from GitHub.
   brew:
     needs: build
     if: github.event_name == 'push'
@@ -182,41 +181,49 @@ jobs:
       - name: Install from local files
         run: |
           V=$(sh -c 'case "$GITHUB_REF" in refs/tags/v*) echo "${GITHUB_REF_NAME#v}" ;; *) echo 0.0.0 ;; esac')
-          brew tap-new --no-git local/test
-          packaging/brew-formula.sh "$V" "file://$PWD/dist" dist > "$(brew --repository)/Library/Taps/local/homebrew-test/Formula/ttrace.rb"
-          brew install local/test/ttrace
+          # a git repository laid out like this one, tapped the same way people do
+          mkdir -p "$RUNNER_TEMP/taprepo/Formula"
+          packaging/brew-formula.sh "$V" "file://$PWD/dist" dist > "$RUNNER_TEMP/taprepo/Formula/ttrace.rb"
+          git -C "$RUNNER_TEMP/taprepo" init -q
+          git -C "$RUNNER_TEMP/taprepo" add -A
+          git -C "$RUNNER_TEMP/taprepo" -c user.name=ci -c user.email=ci@example.com commit -q -m formula
+          brew tap local/ttrace "$RUNNER_TEMP/taprepo"
+          brew install local/ttrace/ttrace
           ttrace --version
           sudo ttrace -r -c 2 -m 3 -n --no-as --no-geo 127.0.0.1 | tee out.txt
           grep -q 127.0.0.1 out.txt
-          brew test local/test/ttrace || true   # the dev build's version is not 0.0.0
+          brew test local/ttrace/ttrace || true   # the dev build's version is not 0.0.0
           brew uninstall ttrace
-          brew untap local/test
+          brew untap local/ttrace
 
-      - name: Publish to the tap
+      # The formula lives in this repository (Formula/ttrace.rb), so no
+      # separate tap repository is needed.
+      - uses: actions/checkout@v4
         if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+        with:
+          ref: main
+          path: main
+
+      - name: Publish the formula
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           V="${GITHUB_REF_NAME#v}"
-          mkdir -p ~/.ssh && echo "$TAP_DEPLOY_KEY" > ~/.ssh/tap && chmod 600 ~/.ssh/tap
-          export GIT_SSH_COMMAND="ssh -i ~/.ssh/tap -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-          git clone -q git@github.com:trelowney/homebrew-tap.git tap
-          mkdir -p tap/Formula
-          packaging/brew-formula.sh "$V" "https://github.com/trelowney/ttrace/releases/download/$GITHUB_REF_NAME" dist > tap/Formula/ttrace.rb
-          cd tap
+          mkdir -p main/Formula
+          packaging/brew-formula.sh "$V" "https://github.com/trelowney/ttrace/releases/download/$GITHUB_REF_NAME" dist > main/Formula/ttrace.rb
+          cd main
           git config user.name trelowney
           git config user.email 54177826+trelowney@users.noreply.github.com
-          git add -A
-          git commit -q -m "ttrace $V"
+          git add Formula/ttrace.rb
+          git commit -q -m "Homebrew formula for ttrace $V"
           git push -q
-          rm ~/.ssh/tap
 
-      - name: Install from the tap
+      - name: Install with Homebrew as people do
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          brew install trelowney/tap/ttrace
+          brew tap trelowney/ttrace https://github.com/trelowney/ttrace
+          brew install trelowney/ttrace/ttrace
           ttrace --version | grep -q "ttrace ${GITHUB_REF_NAME#v}"
-          brew test trelowney/tap/ttrace
+          brew test trelowney/ttrace/ttrace
 
   # Windows window (WinUI 3): one ttrace-gui-windows-<cpu>.exe with
   # everything inside, ttrace.exe too. Nothing to unpack or install.

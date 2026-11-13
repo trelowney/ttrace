@@ -46,7 +46,8 @@ The package lets ttrace run without sudo; updates come with `apt upgrade`.
 **macOS** (and Linux) with [Homebrew](https://brew.sh):
 
 ```
-brew install trelowney/tap/ttrace
+brew tap trelowney/ttrace https://github.com/trelowney/ttrace
+brew install trelowney/ttrace/ttrace
 ```
 
 **Windows:**
