@@ -22,7 +22,9 @@ public partial class App : Application
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         var argv = Environment.GetCommandLineArgs(); // [0] is the program itself
-        SelfTest? test = argv.Length >= 4 && argv[1] == "--selftest" ? new SelfTest(argv[2], argv[3]) : null;
+        SelfTest? test = argv.Length >= 4 && argv[1] == "--selftest"
+            ? new SelfTest(argv[2], argv[3], argv.Length >= 6 && argv[4] == "--replay" ? argv[5] : null)
+            : null;
         window = new MainWindow(test);
         window.Activate();
     }

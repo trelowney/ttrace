@@ -20,7 +20,10 @@ namespace TtraceGui;
 // SelfTest is "ttrace-gui --selftest <result file> <target>": trace the
 // target, write one line about how it went into the file and quit. CI uses
 // it to check that the window, ttrace.exe and the JSON reading work together.
-public sealed record SelfTest(string ResultFile, string Target);
+// With "--replay <file>" the window shows results saved in that file instead
+// of tracing, so the map can be checked on machines where traceroute gets
+// no answers (like the Windows CI runners).
+public sealed record SelfTest(string ResultFile, string Target, string? Replay = null);
 
 public sealed partial class MainWindow : Window
 {
@@ -60,7 +63,17 @@ public sealed partial class MainWindow : Window
             timer.IsRepeating = false;
             timer.Tick += (_, _) => SelfTestDone($"timeout round={last?.Round ?? 0} hops={Rows.Count}");
             timer.Start();
-            Start();
+            if (selfTest.Replay is string file)
+            {
+                dq.TryEnqueue(() =>
+                {
+                    foreach (var l in System.IO.File.ReadAllLines(file)) OnLine(runId, l);
+                });
+            }
+            else
+            {
+                Start();
+            }
         }
     }
 
@@ -324,6 +337,7 @@ public sealed partial class MainWindow : Window
         try
         {
             await System.Threading.Tasks.Task.Delay(1500);
+            Redraw();
             if (Content is UIElement root)
             {
                 var rtb = new Microsoft.UI.Xaml.Media.Imaging.RenderTargetBitmap();

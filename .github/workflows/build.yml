@@ -285,6 +285,20 @@ jobs:
           $line = Get-Content $res
           Write-Output $line
           if (-not $line.StartsWith('ok ')) { exit 1 }
+
+      # The runners get no traceroute answers, so the map stays empty there.
+      # Show saved results instead and keep a picture of the window to look at.
+      - name: Self-test with saved results
+        if: matrix.arch == 'x64'
+        shell: pwsh
+        run: |
+          $res = Join-Path $env:RUNNER_TEMP 'replay.txt'
+          $p = Start-Process -FilePath .\ttrace-gui-windows-x64.exe -ArgumentList '--selftest', $res, 'example.net', '--replay', (Resolve-Path gui\testdata\replay.jsonl).Path -PassThru
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); Write-Error 'the window did not finish in time' }
+          if (-not (Test-Path $res)) { Write-Error 'no result was written'; exit 1 }
+          $line = Get-Content $res
+          Write-Output $line
+          if (-not $line.StartsWith('ok ')) { exit 1 }
           if (-not (Test-Path "$res.png")) { Write-Error 'no picture of the window'; exit 1 }
 
       - name: Picture of the window
@@ -292,7 +306,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-window
-          path: ${{ runner.temp }}/selftest.txt.png
+          path: |
+            ${{ runner.temp }}/selftest.txt.png
+            ${{ runner.temp }}/replay.txt.png
           retention-days: 1
           if-no-files-found: ignore
 
