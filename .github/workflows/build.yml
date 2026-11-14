@@ -286,6 +286,16 @@ jobs:
           $line = Get-Content $res
           Write-Output $line
           if (-not $line.StartsWith('ok ')) { exit 1 }
+          if (-not (Test-Path "$res.png")) { Write-Error 'no picture of the window'; exit 1 }
+
+      - name: Picture of the window
+        if: always() && matrix.arch == 'x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-window
+          path: ${{ runner.temp }}/selftest.txt.png
+          retention-days: 1
+          if-no-files-found: ignore
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')

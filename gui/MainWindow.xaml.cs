@@ -308,13 +308,42 @@ public sealed partial class MainWindow : Window
         Redraw();
     }
 
-    private void SelfTestDone(string result)
+    private async void SelfTestDone(string result)
     {
         if (selfTestFinished) return;
         selfTestFinished = true;
         try
         {
             System.IO.File.WriteAllText(selfTest!.ResultFile, result + Environment.NewLine);
+        }
+        catch (Exception ex)
+        {
+            Crash.Write(ex);
+        }
+        // a picture of the window next to the result, to look at after a CI run
+        try
+        {
+            await System.Threading.Tasks.Task.Delay(1500);
+            if (Content is UIElement root)
+            {
+                var rtb = new Microsoft.UI.Xaml.Media.Imaging.RenderTargetBitmap();
+                await rtb.RenderAsync(root);
+                var pixels = await rtb.GetPixelsAsync();
+                var raw = new byte[pixels.Length];
+                using (var r = Windows.Storage.Streams.DataReader.FromBuffer(pixels)) r.ReadBytes(raw);
+                using var ms = new Windows.Storage.Streams.InMemoryRandomAccessStream();
+                var enc = await Windows.Graphics.Imaging.BitmapEncoder.CreateAsync(Windows.Graphics.Imaging.BitmapEncoder.PngEncoderId, ms);
+                enc.SetPixelData(Windows.Graphics.Imaging.BitmapPixelFormat.Bgra8, Windows.Graphics.Imaging.BitmapAlphaMode.Premultiplied,
+                    (uint)rtb.PixelWidth, (uint)rtb.PixelHeight, 96, 96, raw);
+                await enc.FlushAsync();
+                var png = new byte[ms.Size];
+                using (var r = new Windows.Storage.Streams.DataReader(ms.GetInputStreamAt(0)))
+                {
+                    await r.LoadAsync((uint)ms.Size);
+                    r.ReadBytes(png);
+                }
+                System.IO.File.WriteAllBytes(selfTest!.ResultFile + ".png", png);
+            }
         }
         catch (Exception ex)
         {
@@ -485,9 +514,10 @@ public sealed partial class MainWindow : Window
         foreach (var g in groups) line.Add(ToScreen(g.Place.Lat, g.Lon));
         RouteLine.Points = line;
 
-        Markers.Children.Clear();
-        Brush routeBrush = RouteLine.Stroke;
-        Brush targetBrush = TargetBrushSource.Fill;
+        // one marker per spot: hops that come back to a place already on the
+        // map (not right after each other) are added to its label, so the
+        // numbers do not lie on top of each other
+        var marks = new List<(Point P, string Label, string Tip, bool Target)>();
         foreach (var g in groups)
         {
             var p = ToScreen(g.Place.Lat, g.Lon);
@@ -497,17 +527,33 @@ public sealed partial class MainWindow : Window
                 : $"{g.First}–{g.LastTtl}";
             string tip = $"{(g.First == g.LastTtl ? "Hop" : "Hops")} {hops}: {g.Place.Name} (approximate)\n{g.Host}";
             if (isTarget) tip += "\nThis is the target.";
+            int i = marks.FindIndex(x => Math.Abs(x.P.X - p.X) < 1 && Math.Abs(x.P.Y - p.Y) < 1);
+            if (i >= 0)
+            {
+                var m = marks[i];
+                marks[i] = (m.P, m.Label + ", " + hops, m.Tip + "\n\n" + tip, m.Target || isTarget);
+            }
+            else
+            {
+                marks.Add((p, hops, tip, isTarget));
+            }
+        }
 
-            var dot = new Ellipse { Width = 12, Height = 12, Fill = isTarget ? targetBrush : routeBrush };
-            Canvas.SetLeft(dot, p.X - 6);
-            Canvas.SetTop(dot, p.Y - 6);
-            ToolTipService.SetToolTip(dot, tip);
+        Markers.Children.Clear();
+        Brush routeBrush = RouteLine.Stroke;
+        Brush targetBrush = TargetBrushSource.Fill;
+        foreach (var m in marks)
+        {
+            var dot = new Ellipse { Width = 12, Height = 12, Fill = m.Target ? targetBrush : routeBrush };
+            Canvas.SetLeft(dot, m.P.X - 6);
+            Canvas.SetTop(dot, m.P.Y - 6);
+            ToolTipService.SetToolTip(dot, m.Tip);
             Markers.Children.Add(dot);
 
-            var label = new TextBlock { Text = hops, FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
-            Canvas.SetLeft(label, p.X + 8);
-            Canvas.SetTop(label, p.Y - 9);
-            ToolTipService.SetToolTip(label, tip);
+            var label = new TextBlock { Text = m.Label, FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+            Canvas.SetLeft(label, m.P.X + 8);
+            Canvas.SetTop(label, m.P.Y - 9);
+            ToolTipService.SetToolTip(label, m.Tip);
             Markers.Children.Add(label);
         }
 
