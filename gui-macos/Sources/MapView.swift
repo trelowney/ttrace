@@ -70,16 +70,17 @@ struct MapView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let markers = self.markers(in: geo.size)
+            let lay = self.layout(in: geo.size)
+            let markers = lay.markers
             ZStack(alignment: .topLeading) {
                 Canvas { ctx, size in
                     if let land = Land.loaded.path {
                         ctx.fill(land.applying(viewTransform(size)), with: .color(Color.primary.opacity(0.13)))
                     }
-                    if markers.count > 1 {
-                        var line = Path()
-                        line.addLines(markers.map(\.point))
-                        ctx.stroke(line, with: .color(.accentColor),
+                    if lay.line.count > 1 {
+                        var route = Path()
+                        route.addLines(lay.line)
+                        ctx.stroke(route, with: .color(.accentColor),
                                    style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                     }
                     for m in markers {
@@ -167,19 +168,32 @@ struct MapView: View {
                                  tx: -v.cx * v.scale + w / 2, ty: v.cy * v.scale + h / 2)
     }
 
-    private func markers(in size: CGSize) -> [Marker] {
-        guard size.width > 10, size.height > 10, let s = snapshot else { return [] }
+    // layout gives the route line (every place in order) and the markers.
+    // A route can come back to a place it passed before (e.g. hops 8 and
+    // 12–13 in the same city); such places get one marker naming all hops.
+    private func layout(in size: CGSize) -> (line: [CGPoint], markers: [Marker]) {
+        guard size.width > 10, size.height > 10, let s = snapshot else { return ([], []) }
         let v = mapFrame(size)
         let w = Double(size.width), h = Double(size.height)
         let lastTtl = s.hops.last?.ttl ?? -1
-        return groups().map { g in
+        var line: [CGPoint] = []
+        var markers: [Marker] = []
+        for g in groups() {
             let pt = CGPoint(x: (g.lon * v.k - v.cx) * v.scale + w / 2, y: (v.cy - g.place.lat) * v.scale + h / 2)
+            line.append(pt)
             let isTarget = s.reached && g.lastTtl == lastTtl
             let hops = g.first == g.lastTtl ? "\(g.first)" : "\(g.first)–\(g.lastTtl)"
             var tip = "\(g.first == g.lastTtl ? "Hop" : "Hops") \(hops): \(g.place.name) (approximate)\n\(g.host)"
             if isTarget { tip += "\nThis is the target." }
-            return Marker(id: g.first, point: pt, label: hops, tip: tip, isTarget: isTarget)
+            if let i = markers.firstIndex(where: { abs($0.point.x - pt.x) < 1 && abs($0.point.y - pt.y) < 1 }) {
+                let m = markers[i]
+                markers[i] = Marker(id: m.id, point: m.point, label: m.label + ", " + hops,
+                                    tip: m.tip + "\n\n" + tip, isTarget: m.isTarget || isTarget)
+            } else {
+                markers.append(Marker(id: g.first, point: pt, label: hops, tip: tip, isTarget: isTarget))
+            }
         }
+        return (line, markers)
     }
 
     private func note(hasPlaces: Bool) -> (text: String, retry: Bool) {

@@ -126,9 +126,15 @@ struct PathStep: Decodable {
     }
 
     var label: String {
-        if !ix.isEmpty { return ix + " (IX)" }
-        return name.isEmpty ? "AS" + asn : "AS\(asn) \(name)"
+        if !ix.isEmpty { return ix }
+        return name.isEmpty ? "AS" + asn : "AS\(asn) \(shortAS(name))"
     }
+}
+
+// shortAS keeps the handle of an AS name: "CLOUDFLARENET - Cloudflare, Inc." → "CLOUDFLARENET".
+func shortAS(_ name: String) -> String {
+    if let r = name.range(of: " - "), r.lowerBound > name.startIndex { return String(name[..<r.lowerBound]) }
+    return name
 }
 
 extension KeyedDecodingContainer {
@@ -145,6 +151,7 @@ struct HopRow: Identifiable, Equatable {
     var ttl = ""
     var host = ""
     var network = ""
+    var networkFull = "" // for the hover text
     var country = ""
     var place = ""
     var loss = ""
@@ -167,14 +174,16 @@ struct HopRow: Identifiable, Equatable {
         if h.isPrivate {
             network = "private network"
         } else {
-            var parts: [String] = []
-            if !h.asn.isEmpty { parts.append("AS" + h.asn) }
-            if !h.ix.isEmpty {
-                parts.append(h.ix + " (IX)")
-            } else if !h.asName.isEmpty {
-                parts.append(h.asName)
+            // like the command line: "AS13335 CLOUDFLARENET", on an internet
+            // exchange "AS13335 Frys-IX (CLOUDFLARENET)"
+            func label(_ name: String) -> String {
+                let l: String
+                if h.ix.isEmpty { l = name } else if name.isEmpty { l = h.ix } else { l = "\(h.ix) (\(name))" }
+                return h.asn.isEmpty ? l : ("AS" + h.asn + (l.isEmpty ? "" : " " + l))
             }
-            network = parts.joined(separator: " ")
+            network = label(shortAS(h.asName))
+            networkFull = label(h.asName)
+            if !h.ix.isEmpty { networkFull += "\n\(h.ix) is an internet exchange; the AS is the network using this address there" }
         }
         country = h.country
         place = h.place?.name ?? ""

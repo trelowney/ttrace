@@ -113,11 +113,11 @@ struct HopTable: View {
             TableColumn("Router") { r in
                 Text(r.host).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
             }
-            .width(min: 180, ideal: 300)
+            .width(min: 160, ideal: 230)
             TableColumn("Network") { r in
-                Text(r.network).lineLimit(1).help(r.network)
+                Text(r.network).lineLimit(1).help(r.networkFull)
             }
-            .width(min: 120, ideal: 220)
+            .width(min: 120, ideal: 190)
             TableColumn("CC") { r in
                 Text(r.country).help("Country where the network is registered")
             }
@@ -125,7 +125,7 @@ struct HopTable: View {
             TableColumn("Place (approx.)") { r in
                 Text(r.place).lineLimit(1).help(r.place)
             }
-            .width(min: 80, ideal: 150)
+            .width(min: 80, ideal: 120)
             TableColumn("Loss") { r in
                 Text(r.loss).monospacedDigit().frame(maxWidth: .infinity, alignment: .trailing)
                     .help("Share of probes without an answer")
@@ -149,11 +149,11 @@ struct HopTable: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .width(min: 56, ideal: 110)
+            .width(min: 56, ideal: 90)
             TableColumn("Best – worst ms") { r in
                 Text(r.bestWorst).monospacedDigit().frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .width(min: 90, ideal: 110)
+            .width(min: 90, ideal: 100)
         }
         .overlay {
             if t.rows.isEmpty {
