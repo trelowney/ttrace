@@ -155,17 +155,26 @@ JSON and CSV output also contain the approximate place
 Router places are **approximate** — often only the city or even the country of
 the network owner, not where the router really stands.
 
-### Windows window
+### Window version (Windows and macOS)
 
-For Windows there is also a window version: download
-`ttrace-gui-windows-x64.exe` (or `-arm64.exe`) from the releases and start it.
-It is one file with everything inside, ttrace.exe too; nothing has to be
-installed. On the first start it unpacks itself into a temporary folder, so
-that start takes a few seconds longer. Type the host, press Start, and you get
-the same table plus the route on a world map.
+Type the host, press Start, and you get the same table plus the route on a
+world map. Everything is inside, ttrace too; nothing else has to be installed.
 
-So far the window has only been checked by an automatic test on a build
-machine, not by a person.
+**Windows:** download `ttrace-gui-windows-x64.exe` (or `-arm64.exe`) from the
+releases and start it. On the first start it unpacks itself into a temporary
+folder, so that start takes a few seconds longer.
+
+**macOS** (13 Ventura or newer, Apple silicon and Intel): download
+`ttrace-gui-macos.zip` from the releases, open it and move `ttrace.app` into
+Applications. The app is not signed with a paid Apple developer certificate,
+so macOS blocks the first start and says it cannot check the app. Then open
+System Settings → Privacy & Security, scroll down to the note that ttrace was
+blocked and click **Open Anyway** (on macOS 13 and 14 right-clicking the app
+and choosing Open works too). This is needed only once. No password is asked:
+ICMP probes work as a normal user on macOS.
+
+So far the windows have only been checked by automatic tests on build
+machines, not by a person.
 
 ### Settings file
 
@@ -202,7 +211,8 @@ their hop, in every probe type.
 
 * **Linux:** sending raw ICMP needs root. Either use `sudo`, or allow it once:
   `sudo setcap cap_net_raw+ep $(which ttrace)`. The APT package does this for you.
-* **macOS:** use `sudo`.
+* **macOS:** ICMP probes (the default) work as a normal user. UDP and TCP
+  probes need `sudo`.
 * **Windows:** works as a normal user.
 
 ## Where the data comes from

@@ -43,6 +43,9 @@ type unixProber struct {
 	tos     int
 	conn    *icmp.PacketConn
 	payload []byte
+	// dgram: a datagram ICMP socket instead of a raw one. macOS lets normal
+	// users send ICMP this way (like its ping does), so no sudo is needed.
+	dgram bool
 
 	wmu sync.Mutex // set TTL + write must not interleave between ICMP probes
 
@@ -92,6 +95,15 @@ func New(dst net.IP, opts Options) (Prober, error) {
 		return nil, fmt.Errorf("unknown probe type %q, use icmp, udp or tcp", opts.Proto)
 	}
 	c, err := icmp.ListenPacket(network, laddr)
+	if err != nil && p.proto == "icmp" && runtime.GOOS == "darwin" && isPermission(err) {
+		dn := "udp4"
+		if v6 {
+			dn = "udp6"
+		}
+		if dc, derr := icmp.ListenPacket(dn, laddr); derr == nil {
+			c, err, p.dgram = dc, nil, true
+		}
+	}
 	if err != nil {
 		return nil, permissionHint(err)
 	}
@@ -111,8 +123,12 @@ func New(dst net.IP, opts Options) (Prober, error) {
 	return p, nil
 }
 
+func isPermission(err error) bool {
+	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES)
+}
+
 func permissionHint(err error) error {
-	if !errors.Is(err, os.ErrPermission) && !errors.Is(err, syscall.EPERM) && !errors.Is(err, syscall.EACCES) {
+	if !isPermission(err) {
 		return err
 	}
 	if runtime.GOOS == "linux" {
@@ -121,6 +137,9 @@ func permissionHint(err error) error {
 			exe = "ttrace"
 		}
 		return fmt.Errorf("%w\nttrace needs permission to send raw ICMP packets.\nRun it with sudo, or allow it once:  sudo setcap cap_net_raw+ep %s", err, exe)
+	}
+	if runtime.GOOS == "darwin" {
+		return fmt.Errorf("%w\nUDP and TCP probes need permission to read raw ICMP packets on macOS. Run ttrace with sudo, or use the default ICMP probes, which work without it.", err)
 	}
 	return fmt.Errorf("%w\nttrace needs permission to send raw ICMP packets. Run it with sudo.", err)
 }
@@ -196,9 +215,13 @@ func (p *unixProber) probeICMP(ctx context.Context, ttl, seq int, timeout time.D
 	} else {
 		err = p.conn.IPv4PacketConn().SetTTL(ttl)
 	}
+	var to net.Addr = &net.IPAddr{IP: p.dst}
+	if p.dgram {
+		to = &net.UDPAddr{IP: p.dst}
+	}
 	start := time.Now()
 	if err == nil {
-		_, err = p.conn.WriteTo(b, &net.IPAddr{IP: p.dst})
+		_, err = p.conn.WriteTo(b, to)
 	}
 	p.wmu.Unlock()
 	if err != nil {
@@ -392,11 +415,16 @@ func (p *unixProber) readLoop() {
 			time.Sleep(10 * time.Millisecond)
 			continue
 		}
-		ipa, ok := peer.(*net.IPAddr)
-		if !ok {
+		var from net.IP
+		switch a := peer.(type) {
+		case *net.IPAddr:
+			from = a.IP
+		case *net.UDPAddr: // datagram ICMP socket
+			from = a.IP
+		default:
 			continue
 		}
-		if key, r, ok := p.parse(proto, buf[:n], ipa.IP, at); ok {
+		if key, r, ok := p.parse(proto, buf[:n], from, at); ok {
 			p.deliver(key, r)
 		}
 	}

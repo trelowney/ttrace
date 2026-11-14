@@ -39,9 +39,9 @@ class Ttrace < Formula
 
   def caveats
     <<~EOS
-      ttrace sends raw network packets, which needs extra rights:
-        macOS: run it with sudo, e.g.  sudo ttrace example.com
-        Linux: sudo setcap cap_net_raw+ep #{opt_bin}/ttrace  (once), or use sudo
+      macOS: ttrace works without sudo; only UDP and TCP probes (-P udp|tcp) need sudo.
+      Linux: sending raw packets needs extra rights, once:
+        sudo setcap cap_net_raw+ep #{opt_bin}/ttrace   (or run it with sudo)
     EOS
   end
 

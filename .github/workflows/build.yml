@@ -293,3 +293,76 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$GITHUB_REF_NAME" ttrace-gui-windows-${{ matrix.arch }}.exe --clobber
+
+  gui-macos:
+    needs: build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Build
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/v*) V="${GITHUB_REF_NAME#v}"; AV="${V%%-*}" ;;
+            *) V="dev-${GITHUB_SHA::7}"; AV="0.0.0" ;;
+          esac
+          go mod tidy
+          gui-macos/build.sh "$V" "$AV"
+
+      # ICMP must work without sudo on macOS (datagram ICMP socket); with
+      # sudo the raw socket is used. UDP probes still need sudo and say so.
+      - name: Test the command line program
+        run: |
+          T=gui-macos/build/ttrace.app/Contents/MacOS/ttrace
+          $T --version
+          echo "--- ICMP without sudo"
+          $T -r -c 3 -n --no-geo 1.1.1.1 | tee plain.txt
+          grep -Eq '^ *[0-9]+\. +[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' plain.txt
+          echo "--- options after the host"
+          $T 1.1.1.1 -r -c 2 -n --no-geo -4
+          echo "--- ICMP with sudo"
+          sudo $T -r -c 2 -n --no-geo 1.1.1.1
+          echo "--- UDP without sudo must explain itself"
+          if $T -r -c 1 -n --no-geo -P udp 1.1.1.1 2> udp.txt; then echo "UDP worked without sudo"; else cat udp.txt; grep -q sudo udp.txt; fi
+
+      - name: Package
+        run: |
+          cd gui-macos/build
+          ditto -c -k --keepParent ttrace.app ../../ttrace-gui-macos.zip
+          ls -la ../../ttrace-gui-macos.zip
+
+      # Unpacks the zip as people download it, opens the window, traces a
+      # host and checks that results and places arrived; keeps a picture.
+      - name: Self-test
+        run: |
+          mkdir -p "$RUNNER_TEMP/try" && cd "$RUNNER_TEMP/try"
+          ditto -x -k "$GITHUB_WORKSPACE/ttrace-gui-macos.zip" .
+          RES="$RUNNER_TEMP/selftest.txt"
+          ./ttrace.app/Contents/MacOS/ttrace-gui --selftest "$RES" 1.1.1.1 &
+          PID=$!
+          for i in $(seq 1 200); do kill -0 $PID 2>/dev/null || break; sleep 1; done
+          if kill -0 $PID 2>/dev/null; then kill $PID; echo "the window did not finish in time"; fi
+          wait $PID || true
+          test -f "$RES" || { echo "no result was written"; exit 1; }
+          cat "$RES"
+          ls -la "$RES.png" || true
+          grep -q '^ok ' "$RES"
+
+      - name: Keep the picture of the window
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-window
+          path: ${{ runner.temp }}/selftest.txt.png
+          retention-days: 1
+          if-no-files-found: warn
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" ttrace-gui-macos.zip --clobber
