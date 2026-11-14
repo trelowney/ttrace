@@ -275,7 +275,7 @@ jobs:
           $out = & (Join-Path $links 'ttrace.exe') --version
           Write-Output $out
           if ("$out" -notmatch [regex]::Escape("ttrace $env:V")) { Write-Error 'the installed ttrace is not the right version'; exit 1 }
-          winget uninstall --manifest winget --disable-interactivity
+          winget uninstall --manifest winget --accept-source-agreements --disable-interactivity
           if ($LASTEXITCODE -ne 0) { Write-Error 'winget uninstall failed'; exit 1 }
 
       - name: Send to winget
