@@ -1,28 +1,28 @@
 class Ttrace < Formula
   desc "Network route tracer with AS number, AS name and country for every hop"
   homepage "https://github.com/trelowney/ttrace"
-  version "0.8.0"
+  version "0.8.1"
   license "GPL-3.0-or-later"
 
   on_macos do
     on_arm do
-      url "https://github.com/trelowney/ttrace/releases/download/v0.8.0/ttrace-darwin-arm64"
-      sha256 "c4299a01f3f7889e5466d4c678043063a16e153f555afb118b027f520812ee6f"
+      url "https://github.com/trelowney/ttrace/releases/download/v0.8.1/ttrace-darwin-arm64"
+      sha256 "d7863e1d44ebd6bf41be4cbd495996924d9622f97fc9a6cd8ea887c16bc705d7"
     end
     on_intel do
-      url "https://github.com/trelowney/ttrace/releases/download/v0.8.0/ttrace-darwin-amd64"
-      sha256 "7d8af685f3c5bcd721a812bca71f831532889ac83cef7206b498fafd3d09ddae"
+      url "https://github.com/trelowney/ttrace/releases/download/v0.8.1/ttrace-darwin-amd64"
+      sha256 "33dab0a6f6b88557c2d66c2a7741712139e7f293d8c2f5051f9c0baf8373ecd5"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/trelowney/ttrace/releases/download/v0.8.0/ttrace-linux-arm64"
-      sha256 "744dad89b9bfd2affb13286ad0d1627d60cb78cc9bd0adfdfc7ed948d12ccada"
+      url "https://github.com/trelowney/ttrace/releases/download/v0.8.1/ttrace-linux-arm64"
+      sha256 "74df6e233b139e67146f201feb79a54535e44a9f75ce35638d40e23ea47b2602"
     end
     on_intel do
-      url "https://github.com/trelowney/ttrace/releases/download/v0.8.0/ttrace-linux-amd64"
-      sha256 "2dd42db647f390d87b2e2aca5e9b2e43d905e624d078bf6339b321b1531cfdcd"
+      url "https://github.com/trelowney/ttrace/releases/download/v0.8.1/ttrace-linux-amd64"
+      sha256 "f6655bf914d7a3084d702e3cebe74bfd3e779b5e770d6ad02716e85c3cad2522"
     end
   end
 
