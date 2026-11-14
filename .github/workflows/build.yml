@@ -260,11 +260,16 @@ jobs:
 
       - name: Check and install with winget
         shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}   # the winget update reads GitHub with it (no anonymous rate limit)
         run: |
           # the runner's winget can be older than the manifest schema; check
           # with the newest one, like the winget-pkgs validation does
           Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery -Scope CurrentUser
-          Repair-WinGetPackageManager -Latest -Force
+          for ($i = 1; $i -le 3; $i++) {
+            try { Repair-WinGetPackageManager -Latest -Force; break }
+            catch { if ($i -eq 3) { throw }; Write-Output "winget update failed ($_), trying again"; Start-Sleep 20 }
+          }
           winget --version
           winget validate --manifest winget
           if ($LASTEXITCODE -ne 0) { Write-Error 'winget validate failed'; exit 1 }
