@@ -229,7 +229,6 @@ jobs:
   # everything inside, ttrace.exe too. Nothing to unpack or install.
   gui:
     needs: build
-    if: github.ref != 'refs/heads/dev'
     runs-on: windows-latest
     strategy:
       fail-fast: false
