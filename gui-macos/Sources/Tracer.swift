@@ -9,6 +9,11 @@ struct SelfTest {
     let resultFile: String
     let target: String
 
+    // log writes a line to stderr during a self-test, so CI shows how far it got.
+    static func log(_ line: String) {
+        FileHandle.standardError.write(Data(("selftest: " + line + "\n").utf8))
+    }
+
     static func fromArguments() -> SelfTest? {
         let a = CommandLine.arguments
         guard let i = a.firstIndex(of: "--selftest"), i + 2 < a.count else { return nil }
@@ -49,6 +54,22 @@ final class Tracer: ObservableObject {
 
     init(selfTest: SelfTest?) {
         self.selfTest = selfTest
+        if let t = selfTest {
+            SelfTest.log("started")
+            // a last resort that does not need the main thread: if the window
+            // never comes up or hangs, still leave a result and quit
+            DispatchQueue.global().asyncAfter(deadline: .now() + 170) {
+                SelfTest.log("no result after 170 s")
+                try? "timeout: the window did not finish\n".write(toFile: t.resultFile, atomically: true, encoding: .utf8)
+                exit(1)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
+                // the window should be up by now; start anyway if it is not
+                guard let self = self, !self.started else { return }
+                SelfTest.log("window did not appear in 20 s (windows: \(NSApp.windows.count)), starting anyway")
+                self.appeared()
+            }
+        }
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             self?.stop()
         }
@@ -59,6 +80,7 @@ final class Tracer: ObservableObject {
         guard !started else { return }
         started = true
         guard let t = selfTest else { return }
+        SelfTest.log("window appeared, windows: \(NSApp.windows.count)")
         target = t.target
         DispatchQueue.main.asyncAfter(deadline: .now() + 150) { [weak self] in
             guard let self = self else { return }
@@ -185,6 +207,7 @@ final class Tracer: ObservableObject {
     private func gotLine(_ line: Data) {
         guard let s = try? JSONDecoder().decode(Snapshot.self, from: line) else { return } // not a result line
         last = s
+        if selfTest != nil { SelfTest.log("round \(s.round), hops \(s.hops.count), geo: \(s.geo)") }
         let new = s.hops.map(HopRow.init)
         if new != rows { rows = new }
         summary = Tracer.summaryText(s)
@@ -203,6 +226,7 @@ final class Tracer: ObservableObject {
         proc = nil
         running = false
         if code != 0 || signaled {
+            if selfTest != nil { SelfTest.log("ttrace ended with \(code): \(errLines)") }
             let msg = errLines.isEmpty ? "ttrace stopped unexpectedly (exit code \(code))." : errLines.joined(separator: " ")
             fail("The trace could not run", msg + " Check the address and the internet connection, then try again.")
         } else {

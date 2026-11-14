@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // also when started straight from Contents/MacOS (as CI does)
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        if CommandLine.arguments.contains("--selftest") { SelfTest.log("launched") }
     }
 }
 

@@ -338,6 +338,7 @@ jobs:
       # Unpacks the zip as people download it, opens the window, traces a
       # host and checks that results and places arrived; keeps a picture.
       - name: Self-test
+        timeout-minutes: 6
         run: |
           mkdir -p "$RUNNER_TEMP/try" && cd "$RUNNER_TEMP/try"
           ditto -x -k "$GITHUB_WORKSPACE/ttrace-gui-macos.zip" .
@@ -345,7 +346,7 @@ jobs:
           ./ttrace.app/Contents/MacOS/ttrace-gui --selftest "$RES" 1.1.1.1 &
           PID=$!
           for i in $(seq 1 200); do kill -0 $PID 2>/dev/null || break; sleep 1; done
-          if kill -0 $PID 2>/dev/null; then kill $PID; echo "the window did not finish in time"; fi
+          if kill -0 $PID 2>/dev/null; then screencapture -x "$RUNNER_TEMP/screen.png" || true; kill $PID; echo "the window did not finish in time"; fi
           wait $PID || true
           test -f "$RES" || { echo "no result was written"; exit 1; }
           cat "$RES"
@@ -357,7 +358,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-window
-          path: ${{ runner.temp }}/selftest.txt.png
+          path: |
+            ${{ runner.temp }}/selftest.txt.png
+            ${{ runner.temp }}/screen.png
           retention-days: 1
           if-no-files-found: warn
 
