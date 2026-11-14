@@ -261,7 +261,10 @@ jobs:
       - name: Check and install with winget
         shell: pwsh
         run: |
-          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { Write-Error 'winget is not on this runner'; exit 1 }
+          # the runner's winget can be older than the manifest schema; check
+          # with the newest one, like the winget-pkgs validation does
+          Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery -Scope CurrentUser
+          Repair-WinGetPackageManager -Latest -Force
           winget --version
           winget validate --manifest winget
           if ($LASTEXITCODE -ne 0) { Write-Error 'winget validate failed'; exit 1 }
