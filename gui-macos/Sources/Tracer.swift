@@ -75,15 +75,6 @@ final class Tracer: ObservableObject {
                 try? "timeout: the window did not finish\n".write(toFile: t.resultFile, atomically: true, encoding: .utf8)
                 exit(1)
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
-                // the window should be up by now; start anyway if it is not
-                guard let self = self, !self.started else { return }
-                SelfTest.log("window did not appear in 20 s (windows: \(NSApp.windows.count)), starting anyway")
-                self.appeared()
-            }
-        }
-        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.stop()
         }
     }
 
@@ -92,7 +83,6 @@ final class Tracer: ObservableObject {
         guard !started else { return }
         started = true
         guard let t = selfTest else { return }
-        SelfTest.log("window appeared, windows: \(NSApp.windows.count)")
         target = t.target
         DispatchQueue.main.asyncAfter(deadline: .now() + 150) { [weak self] in
             guard let self = self else { return }
