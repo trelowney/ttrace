@@ -10,8 +10,20 @@ struct SelfTest {
     let target: String
 
     // log writes a line to stderr during a self-test, so CI shows how far it got.
+    // When started with "open" stderr goes nowhere, so it also goes to <result file>.log.
     static func log(_ line: String) {
-        FileHandle.standardError.write(Data(("selftest: " + line + "\n").utf8))
+        let d = Data(("selftest: " + line + "\n").utf8)
+        FileHandle.standardError.write(d)
+        if let t = fromArguments() {
+            let f = t.resultFile + ".log"
+            if let h = FileHandle(forWritingAtPath: f) {
+                h.seekToEndOfFile()
+                h.write(d)
+                h.closeFile()
+            } else {
+                FileManager.default.createFile(atPath: f, contents: d)
+            }
+        }
     }
 
     static func fromArguments() -> SelfTest? {

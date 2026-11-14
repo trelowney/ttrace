@@ -343,14 +343,18 @@ jobs:
           mkdir -p "$RUNNER_TEMP/try" && cd "$RUNNER_TEMP/try"
           ditto -x -k "$GITHUB_WORKSPACE/ttrace-gui-macos.zip" .
           RES="$RUNNER_TEMP/selftest.txt"
-          ./ttrace.app/Contents/MacOS/ttrace-gui --selftest "$RES" 1.1.1.1 &
+          # started the way a double click starts it
+          open -n -W ./ttrace.app --args --selftest "$RES" 1.1.1.1 &
           PID=$!
-          for i in $(seq 1 200); do kill -0 $PID 2>/dev/null || break; sleep 1; done
-          if kill -0 $PID 2>/dev/null; then screencapture -x "$RUNNER_TEMP/screen.png" || true; kill $PID; echo "the window did not finish in time"; fi
+          sleep 30
+          screencapture -x "$RUNNER_TEMP/screen.png" || echo "no screen picture"
+          for i in $(seq 1 170); do kill -0 $PID 2>/dev/null || break; sleep 1; done
+          if kill -0 $PID 2>/dev/null; then pkill -f ttrace-gui || true; echo "the window did not finish in time"; fi
           wait $PID || true
+          cat "$RES.log" || true
           test -f "$RES" || { echo "no result was written"; exit 1; }
           cat "$RES"
-          ls -la "$RES.png" || true
+          ls -la "$RES.png" || { echo "no picture of the window"; exit 1; }
           grep -q '^ok ' "$RES"
 
       - name: Keep the picture of the window
