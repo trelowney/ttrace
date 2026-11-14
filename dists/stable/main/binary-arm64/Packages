@@ -18,3 +18,23 @@ Description: network route tracer with AS number, AS name and country for every 
  Also marks internet exchanges, latency jumps, DSCP rewrites, finds the path
  MTU and draws the route on a world map in the terminal.
 
+Package: ttrace
+Architecture: arm64
+Version: 0.8.0
+Priority: optional
+Section: net
+Maintainer: trelowney <54177826+trelowney@users.noreply.github.com>
+Depends: libcap2-bin
+Filename: pool/main/t/ttrace/ttrace_0.8.0_arm64.deb
+Size: 2244340
+MD5sum: e07fb03a836e8b3412a78bd72b6f21fa
+SHA1: 0e971500c8e93f28e0d885164cbd3f16e83937b7
+SHA256: 4871ceae76e9454eb8b24ba6d3c908f31812bdf00749e7ae46b4f4d1f541f83b
+SHA512: 4a89b8b7515c4ffdd9e061fcfc588c83b1cd94d7a1de23fdc46583bda0661cbe85927fc51c7637231665edbf102102abc510bb907a5b0ecf60ff3413b2cff417
+Homepage: https://github.com/trelowney/ttrace
+Description: network route tracer with AS number, AS name and country for every hop
+ Traces the route to a host like mtr or traceroute and shows, for every hop,
+ who runs it: AS number, AS name and country, next to loss and latency.
+ Also marks internet exchanges, latency jumps, DSCP rewrites, finds the path
+ MTU and draws the route on a world map in the terminal.
+
