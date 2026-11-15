@@ -41,6 +41,15 @@ echo "deb [signed-by=/etc/apt/keyrings/ttrace.asc] https://trelowney.github.io/t
 sudo apt update && sudo apt install ttrace
 ```
 
+The repository is signed with the key `228A A1EA FE05 C353 1D74 A2CA A6E3 ECAE 6A76 3802`.
+It was replaced on 15 November 2026. If `apt update` says the ttrace repository's
+signature is not valid, download the key again:
+
+```
+sudo curl -fsSL -o /etc/apt/keyrings/ttrace.asc https://trelowney.github.io/ttrace/ttrace.asc
+sudo apt update
+```
+
 The package lets ttrace run without sudo; updates come with `apt upgrade`.
 
 **macOS** (and Linux) with [Homebrew](https://brew.sh):

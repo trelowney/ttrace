@@ -27,4 +27,6 @@ apt-ftparchive \
 mv /tmp/Release "$dist/Release"
 gpg --batch --yes --clearsign -o "$dist/InRelease" "$dist/Release"
 gpg --batch --yes --armor --detach-sign -o "$dist/Release.gpg" "$dist/Release"
+# the public key people download; always the one the repository is signed with
+gpg --batch --yes --armor --export > ttrace.asc
 touch .nojekyll

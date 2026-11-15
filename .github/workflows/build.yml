@@ -284,7 +284,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Write-Error 'winget uninstall failed'; exit 1 }
 
       - name: Send to winget
-        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+        # the repository variable WINGET_PAUSE=1 holds a version back from winget
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') && vars.WINGET_PAUSE != '1'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
